@@ -1,76 +1,27 @@
-"""Optional LLM, Deepgram, ElevenLabs, and CRM webhook calls.
+"""Deepgram, ElevenLabs, and CRM webhook calls.
 
-Every function no-ops or raises MissingKey when the matching secret is absent.
-The rule engine remains the source of truth for bookings and transfers.
+Claude lives in app.llm. The free-form rephrase step is gone: a model may
+choose tools, and tool results are the only source of times and prices.
 """
 
 from __future__ import annotations
 
-import re
+import hashlib
+import hmac
+import json
+import threading
+import time
 
 import httpx
-
-from app.agent.engine import SessionState
-
-TIME_TOKEN = re.compile(r"\d{1,2}:\d{2}\s*[AP]M", re.I)
-MONEY_TOKEN = re.compile(r"\$\d[\d,]*")
 
 
 class MissingKey(RuntimeError):
     pass
 
 
-def rephrase(say: str, state: SessionState, user_text: str, settings) -> str:
-    """Rewrite the spoken line when an OpenAI-compatible key is set.
-
-    The rewrite is discarded if it drops a time or a price the rules included.
-    """
-    if not settings.openai_api_key:
-        return say
-    system = (
-        "You are Riley, a calm phone receptionist for a home-service company. "
-        "Rewrite the draft reply so it sounds natural spoken aloud. "
-        "Keep every clock time, dollar amount, address, phone number, and name exactly as written. "
-        "Do not add new offers. Reply with the spoken sentence only."
-    )
-    user = (
-        f"Caller just said: {user_text}\n"
-        f"Intent: {state.intent}. Phase: {state.phase}. Outcome: {state.outcome}.\n"
-        f"Draft reply: {say}"
-    )
-    try:
-        response = httpx.post(
-            settings.openai_base_url.rstrip("/") + "/chat/completions",
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-            json={
-                "model": settings.openai_model,
-                "temperature": 0.3,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
-            timeout=12,
-        )
-        response.raise_for_status()
-        rewritten = response.json()["choices"][0]["message"]["content"].strip()
-    except (httpx.HTTPError, KeyError, IndexError, TypeError):
-        return say
-    if not rewritten:
-        return say
-    if not _preserves(say, rewritten):
-        return say
-    return rewritten
-
-
-def _preserves(draft: str, rewritten: str) -> bool:
-    for token in TIME_TOKEN.findall(draft):
-        if token.lower() not in rewritten.lower():
-            return False
-    for token in MONEY_TOKEN.findall(draft):
-        if token not in rewritten:
-            return False
-    return True
+def sign_payload(payload: dict, secret: str) -> str:
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
 
 
 def transcribe_mulaw(audio: bytes, api_key: str, client: httpx.Client | None = None) -> str:
@@ -111,12 +62,45 @@ def synthesize_ulaw(text: str, api_key: str, voice_id: str, client: httpx.Client
             client.close()
 
 
-def deliver_webhook(url: str, payload: dict) -> dict:
+def deliver_webhook(url: str, payload: dict, secret: str | None = None) -> dict:
+    body = dict(payload)
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        headers["X-Receptionist-Signature"] = sign_payload(body, secret)
     if not url:
-        return {"status": "mock", "code": None, "detail": "Logged locally. Set crm.webhook_url to deliver to your CRM (GoHighLevel, HubSpot, or Zapier)."}
-    try:
-        response = httpx.post(url, json=payload, timeout=5)
-    except httpx.HTTPError as exc:
-        return {"status": "error", "code": None, "detail": str(exc)}
-    status = "delivered" if response.status_code < 300 else "error"
-    return {"status": status, "code": response.status_code, "detail": response.text[:280]}
+        return {
+            "status": "mock",
+            "code": None,
+            "detail": "Logged locally. Set crm.webhook_url to deliver to your CRM (GoHighLevel, HubSpot, or Zapier).",
+        }
+    delay = 0.05
+    last = {"status": "error", "code": None, "detail": "not sent"}
+    for _attempt in range(3):
+        try:
+            response = httpx.post(url, json=body, headers=headers, timeout=5)
+        except httpx.HTTPError as exc:
+            last = {"status": "error", "code": None, "detail": str(exc)}
+            time.sleep(delay)
+            delay *= 2
+            continue
+        status = "delivered" if response.status_code < 300 else "error"
+        last = {"status": status, "code": response.status_code, "detail": response.text[:280]}
+        if status == "delivered":
+            return last
+        time.sleep(delay)
+        delay *= 2
+    return last
+
+
+def enqueue_webhook(url: str, payload: dict, secret: str | None, on_done) -> dict:
+    """Deliver off the request path when a URL is set. Local logs stay synchronous."""
+    if not url:
+        result = deliver_webhook(url, payload, secret)
+        on_done(result)
+        return result
+
+    def work() -> None:
+        on_done(deliver_webhook(url, payload, secret))
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"status": "queued", "code": None, "detail": "Delivery is running in the background."}

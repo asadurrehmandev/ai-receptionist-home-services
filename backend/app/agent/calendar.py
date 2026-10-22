@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import re
+import threading
 from datetime import datetime
 from typing import Protocol
 from uuid import uuid4
+
+
+class SlotTaken(Exception):
+    """The requested window overlaps a booking that is already committed."""
+
+    def __init__(self, start: str) -> None:
+        super().__init__(start)
+        self.start = start
 
 
 def new_booking_id() -> str:
@@ -17,14 +26,13 @@ def _digits(value: str | None) -> str:
 
 
 def _name_matches(candidate: str, query: str) -> bool:
+    """Full-name match only. A single first name is not enough to act on a booking."""
     left = candidate.casefold().split()
-    right = query.casefold().split()
-    if not right:
+    right = [token for token in query.casefold().split() if token]
+    if len(right) < 2 or not left:
         return False
     if candidate.casefold() == query.casefold():
         return True
-    if len(right) == 1:
-        return right[0] in left
     return all(token in left for token in right)
 
 
@@ -43,6 +51,7 @@ class Calendar(Protocol):
 class MemoryCalendar:
     def __init__(self) -> None:
         self.bookings: list[dict] = []
+        self._lock = threading.Lock()
 
     def busy(self) -> list[tuple[datetime, datetime]]:
         spans = []
@@ -66,32 +75,62 @@ class MemoryCalendar:
         return None
 
     def book(self, draft: dict) -> dict:
-        record = {
-            "id": draft.get("id") or new_booking_id(),
-            "call_id": draft.get("call_id"),
-            "name": draft.get("name"),
-            "phone": draft.get("phone"),
-            "address": draft.get("address"),
-            "issue": draft.get("issue"),
-            "start": draft["start"],
-            "end": draft["end"],
-            "status": "booked",
-        }
-        self.bookings.append(record)
-        return record
+        with self._lock:
+            start = datetime.fromisoformat(draft["start"])
+            end = datetime.fromisoformat(draft["end"])
+            existing = self._for_call(draft.get("call_id"))
+            if existing and draft.get("call_id"):
+                return existing
+            if self._overlaps(start, end, ignore_id=None):
+                raise SlotTaken(draft["start"])
+            record = {
+                "id": draft.get("id") or new_booking_id(),
+                "call_id": draft.get("call_id"),
+                "name": draft.get("name"),
+                "phone": draft.get("phone"),
+                "address": draft.get("address"),
+                "issue": draft.get("issue"),
+                "start": draft["start"],
+                "end": draft["end"],
+                "status": "booked",
+            }
+            self.bookings.append(record)
+            return record
 
     def cancel(self, booking_id: str) -> dict:
-        for booking in self.bookings:
-            if booking["id"] == booking_id:
-                booking["status"] = "cancelled"
-                return booking
+        with self._lock:
+            for booking in self.bookings:
+                if booking["id"] == booking_id:
+                    booking["status"] = "cancelled"
+                    return booking
         raise KeyError(booking_id)
 
     def reschedule(self, booking_id: str, start: datetime, end: datetime) -> dict:
-        for booking in self.bookings:
-            if booking["id"] == booking_id:
-                booking["start"] = start.isoformat()
-                booking["end"] = end.isoformat()
-                booking["status"] = "booked"
-                return booking
+        with self._lock:
+            if self._overlaps(start, end, ignore_id=booking_id):
+                raise SlotTaken(start.isoformat())
+            for booking in self.bookings:
+                if booking["id"] == booking_id:
+                    booking["start"] = start.isoformat()
+                    booking["end"] = end.isoformat()
+                    booking["status"] = "booked"
+                    return booking
         raise KeyError(booking_id)
+
+    def _for_call(self, call_id: str | None) -> dict | None:
+        if not call_id:
+            return None
+        for booking in self.bookings:
+            if booking.get("call_id") == call_id and booking.get("status") == "booked":
+                return booking
+        return None
+
+    def _overlaps(self, start: datetime, end: datetime, ignore_id: str | None) -> bool:
+        for booking in self.bookings:
+            if booking.get("status") != "booked" or booking.get("id") == ignore_id:
+                continue
+            busy_start = datetime.fromisoformat(booking["start"])
+            busy_end = datetime.fromisoformat(booking["end"])
+            if start < busy_end and end > busy_start:
+                return True
+        return False

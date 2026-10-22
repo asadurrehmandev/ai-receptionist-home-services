@@ -1,14 +1,19 @@
-"""Wire the engine to storage, CRM delivery, and optional LLM phrasing."""
+"""Wire the engine to storage, CRM delivery, and the optional Claude dialog."""
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
+from time import perf_counter
 from uuid import uuid4
 
+from app.agent.dialog import Dialog
 from app.agent.engine import Engine, SessionState
+from app.agent.nlu import caller_id_digits
 from app.agent.scheduling import available_slots, format_slot
 from app.config_loader import BusinessConfig
-from app.integrations import deliver_webhook, rephrase
+from app.integrations import deliver_webhook, enqueue_webhook
+from app.llm.claude import ClaudeClient
 from app.store import Store, StoreCalendar
 
 
@@ -35,10 +40,24 @@ class ReceptionService:
         self.settings = settings
         self.clock = clock or SystemClock(config.zone)
         self.engine = Engine(config, StoreCalendar(store), self.clock)
+        model = settings.model_client
+        if model is None and settings.anthropic_api_key:
+            model = ClaudeClient(settings.anthropic_api_key, settings.anthropic_model)
+        self.dialog = Dialog(self.engine, model)
+        self._guard = threading.Lock()
+        self._call_locks: dict[str, threading.Lock] = {}
 
-    def start(self, channel: str, external_id: str | None = None) -> dict:
+    def _lock_for(self, call_id: str) -> threading.Lock:
+        with self._guard:
+            lock = self._call_locks.get(call_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._call_locks[call_id] = lock
+            return lock
+
+    def start(self, channel: str, external_id: str | None = None, caller_id: str | None = None) -> dict:
         call_id = "call_" + uuid4().hex[:12]
-        state = SessionState(call_id=call_id)
+        state = SessionState(call_id=call_id, caller_id=caller_id_digits(caller_id))
         result = self.engine.greeting(state)
         now = self.clock.now()
         self.store.create_call(call_id, channel, external_id, now, state)
@@ -46,18 +65,31 @@ class ReceptionService:
         self.store.save_state(call_id, state, ended=False, ended_at=None)
         return self._public(call_id, result.say, result, state)
 
-    def turn(self, call_id: str, text: str) -> dict:
-        state = self.store.load_state(call_id)
-        now = self.clock.now()
-        self.store.add_turn(call_id, "caller", text, None, now)
-        result = self.engine.handle(state, text)
-        spoken = rephrase(result.say, state, text, self.settings)
-        result.say = spoken
-        self.store.add_turn(call_id, "agent", spoken, result.latency_ms, now)
-        self._apply(call_id, result, now)
-        ended = state.outcome is not None
-        self.store.save_state(call_id, state, ended=ended, ended_at=now if ended else None)
-        return self._public(call_id, spoken, result, state)
+    def turn(self, call_id: str, text: str, caller_id: str | None = None) -> dict:
+        text = (text or "")[:2000]
+        wall = perf_counter()
+        with self._lock_for(call_id):
+            state = self.store.load_state(call_id)
+            if caller_id and not state.caller_id:
+                state.caller_id = caller_id_digits(caller_id)
+            if text and state.last_caller_text == text and state.last_reply:
+                cached = self._public(call_id, state.last_reply, type("R", (), {"latency_ms": 0.0, "events": []})(), state)
+                cached["duplicate"] = True
+                cached["engine_ms"] = 0.0
+                return cached
+            now = self.clock.now()
+            self.store.add_turn(call_id, "caller", text, None, now)
+            result = self.dialog.handle(state, text)
+            state.last_caller_text = text
+            engine_ms = result.latency_ms
+            result.latency_ms = (perf_counter() - wall) * 1000
+            self.store.add_turn(call_id, "agent", result.say, result.latency_ms, now)
+            self._apply(call_id, result, now)
+            ended = state.outcome is not None
+            self.store.save_state(call_id, state, ended=ended, ended_at=now if ended else None)
+            public = self._public(call_id, result.say, result, state)
+            public["engine_ms"] = round(engine_ms, 2)
+            return public
 
     def reset_and_seed(self, seed_fn) -> dict:
         self.store.wipe()
@@ -69,7 +101,11 @@ class ReceptionService:
             payload = dict(event["payload"])
             status = None
             if event["type"] == "webhook":
-                delivery = deliver_webhook(self.config.webhook_url, payload)
+                secret = self.settings.webhook_secret
+                if self.config.webhook_url:
+                    delivery = enqueue_webhook(self.config.webhook_url, payload, secret, lambda _result: None)
+                else:
+                    delivery = deliver_webhook("", payload, secret)
                 payload["delivery"] = delivery
                 status = delivery["status"]
             elif event["type"] == "sms":
@@ -101,6 +137,7 @@ class ReceptionService:
             },
             "offered": offered,
             "events": result.events,
+            "language": state.language,
         }
 
     def plant_existing_booking(self) -> dict | None:

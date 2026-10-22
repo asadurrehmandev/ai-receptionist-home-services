@@ -36,7 +36,7 @@ export function Setup() {
   if (!config) return <Loading label="Reading the shop profile…" />;
 
   const checks = [
-    ["OpenAI phrasing", config.runtime.llm],
+    ["Claude tool-calling", config.runtime.llm],
     ["Deepgram speech-to-text", config.runtime.stt],
     ["ElevenLabs voice", config.runtime.tts],
     ["Twilio signature check", config.runtime.twilio_signature],
@@ -50,9 +50,9 @@ export function Setup() {
           <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">config/business.yaml</p>
           <h1 className="mt-1 font-display text-4xl">{config.business.name}</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            {config.business.agent_name} covers {config.business.trade.toLowerCase()} in {config.business.city}. Swap the
-            YAML to retarget the same desk at another plumber, HVAC shop, or tow company. Brain right now:{" "}
-            {config.runtime.brain}.
+            {config.business.agent_name} covers {config.business.trade.toLowerCase()} in {config.business.city}. The
+            sample rules are for plumbing and HVAC. Brain right now: {config.runtime.brain}. Calls and leads are kept{" "}
+            {30} days, then purged.
           </p>
         </div>
         <Dialog>

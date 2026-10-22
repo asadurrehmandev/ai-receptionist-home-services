@@ -1,10 +1,11 @@
 # Swap this file (or set BUSINESS_CONFIG) to retarget the receptionist
-# at another shop: plumber, HVAC, towing, dental, or med spa.
+# at another plumbing or HVAC shop. The rules and price bands below are for that trade.
 business:
   name: Northline Plumbing & HVAC
   agent_name: Riley
   trade: Plumbing and HVAC
   phone_display: "(512) 555-0142"
+  phone: "+15125550142"
   timezone: America/Chicago
   city: Austin
 
@@ -116,6 +117,8 @@ crm:
   provider_label: GoHighLevel / HubSpot / Zapier
 
 voice:
-  # gather uses Twilio speech recognition. stream requires DEEPGRAM_API_KEY and ELEVENLABS_API_KEY.
+  # gather uses Twilio speech recognition. stream requires DEEPGRAM_API_KEY and ELEVENLABS_API_KEY
+  # and places turns while the call is still up. Gather is the default until both keys exist.
   mode: auto
   gather_voice: Polly.Joanna
+  language: en-US

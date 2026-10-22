@@ -9,7 +9,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.integrations import MissingKey, _preserves, synthesize_ulaw, transcribe_mulaw
+from app.integrations import MissingKey, synthesize_ulaw, transcribe_mulaw
+from app.agent.facts import speech_supported
 from app.main import create_app
 from app.seed import seed_demo
 from app.service import FixedClock, ReceptionService
@@ -90,6 +91,8 @@ def test_twilio_gather_escalates_with_dial(client):
     assert incoming.status_code == 200
     xml = incoming.text
     assert "<Gather" in xml
+    assert 'timeout="5"' in xml
+    assert 'actionOnEmptyResult="true"' in xml
     assert "Northline Plumbing" in xml
     assert "<Stream" not in xml
     gathered = client.post(
@@ -97,7 +100,9 @@ def test_twilio_gather_escalates_with_dial(client):
         data={"CallSid": "CA123", "SpeechResult": "I smell gas in the laundry room."},
     )
     assert gathered.status_code == 200
-    assert "<Dial>+15125550199</Dial>" in gathered.text
+    assert "<Number>+15125550199</Number>" in gathered.text
+    assert 'timeout="20"' in gathered.text
+    assert "dial-status" in gathered.text
     assert "Miguel" in gathered.text
 
 
@@ -229,18 +234,8 @@ def test_deepgram_and_elevenlabs_clients():
         assert synthesize_ulaw("You're booked", "el_test", "voice", eleven_client) == b"\xff" * 160
     with pytest.raises(MissingKey):
         transcribe_mulaw(b"\x00", "")
-    assert _preserves("Wednesday at 11:30 AM for $89", "See you Wednesday at 11:30 AM, the visit is $89.")
-    assert not _preserves("Wednesday at 11:30 AM", "Wednesday morning works.")
-
-
-def test_rephrase_keeps_draft_without_a_key():
-    from app.agent.engine import SessionState
-    from app.integrations import rephrase
-
-    settings = Settings(
-        config_path=ROOT / "config" / "business.yaml",
-        db_path=ROOT / "data" / "unused.db",
-        static_dir=None,
-        seed_on_start=False,
-    )
-    assert rephrase("You're booked for 11:30 AM.", SessionState(), "yes", settings) == "You're booked for 11:30 AM."
+    allowed = "Wednesday, October 22 at 11:30 AM for $89"
+    assert speech_supported("See you Wednesday at 11:30 AM, the visit is $89.", allowed)
+    assert not speech_supported("You're booked for Saturday, October 31 at 11:30 AM", allowed)
+    assert not speech_supported(allowed + " We can also do it for $99 at 6:30 PM.", allowed)
+    assert not speech_supported("No need to worry, this doesn't sound like an emergency.", allowed, emergency=True)

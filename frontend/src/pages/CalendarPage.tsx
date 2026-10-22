@@ -65,7 +65,7 @@ export function CalendarPage() {
         <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">90-minute windows</p>
         <h1 className="mt-1 font-display text-4xl">Booked jobs</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Riley only offers slots inside shop hours, after a 90-minute lead, skipping anything already on the board.
+          Each window is one truck. A second caller who confirms the same start time is told that window was just taken.
           {active.length === 0 ? " The week is clear." : ` ${active.length} visit${active.length === 1 ? "" : "s"} are held.`}
         </p>
       </header>

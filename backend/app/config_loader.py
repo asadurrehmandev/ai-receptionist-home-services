@@ -60,6 +60,8 @@ class BusinessConfig:
     crm_provider_label: str
     voice_mode: str
     gather_voice: str
+    phone_e164: str = "+15125550142"
+    gather_language: str = "en-US"
 
     @property
     def zone(self) -> ZoneInfo:
@@ -171,4 +173,6 @@ def load_business(path: str | Path) -> BusinessConfig:
         crm_provider_label=crm.get("provider_label") or "webhook",
         voice_mode=voice.get("mode") or "auto",
         gather_voice=voice.get("gather_voice") or "Polly.Joanna",
+        phone_e164=str(business.get("phone") or "+15125550142"),
+        gather_language=str(voice.get("language") or "en-US"),
     )

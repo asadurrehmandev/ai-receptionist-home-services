@@ -2,32 +2,37 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from time import perf_counter
 from uuid import uuid4
 
-from app.agent.calendar import Calendar, new_booking_id
+from app.agent.calendar import Calendar, SlotTaken, new_booking_id
 from app.agent.nlu import (
-    detect_emergency,
+    caller_id_digits,
+    classify_emergency,
     detect_intent,
     extract_city,
-    extract_introduced_name,
     extract_issue,
     extract_phone,
     extract_street,
     extract_zip,
     format_phone,
     guess_bare_name,
+    is_correction,
+    is_haggle,
     is_no,
     is_spam,
     is_yes,
+    looks_spanish,
+    spelled_word,
     wants_abandon,
     wants_cancel,
     wants_human,
     wants_reschedule,
 )
-from app.agent.scheduling import available_slots, format_slot, join_slots, match_offered, parse_preference
+from app.agent.scheduling import available_slots, format_slot, join_slots, latest_on_day, match_offered, parse_preference
 from app.config_loader import BusinessConfig
 
 
@@ -49,6 +54,12 @@ class SessionState:
     booking_id: str | None = None
     pending_action: str | None = None
     call_id: str | None = None
+    caller_id: str | None = None
+    language: str = "en"
+    silence_count: int = 0
+    wish: str | None = None
+    last_caller_text: str | None = None
+    last_reply: str | None = None
     events: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -91,20 +102,54 @@ class Engine:
         started = perf_counter()
         raw = (text or "").strip()
         if not raw:
+            state.silence_count += 1
+            if state.silence_count >= 3:
+                state.outcome = "missed"
+                state.phase = "closed"
+                return self._finish(
+                    state,
+                    "I still can't hear you. Please call back when you can. Goodbye.",
+                    started,
+                )
             return self._finish(state, "I didn't catch that. What's going on at the property?", started)
+        state.silence_count = 0
         if state.phase == "closed":
+            if state.booking_id and state.last_reply and raw == (state.last_caller_text or ""):
+                return self._finish(state, state.last_reply, started)
             return self._finish(
                 state,
                 "This call has ended. Please call back if something else comes up.",
                 started,
             )
 
-        emergency = detect_emergency(raw)
-        if emergency:
+        if state.phase == "triage":
+            if is_yes(raw) or re.search(r"won't stop|wont stop|pouring|flood|spreading|all over|yes", raw, re.I):
+                if is_no(raw) and not is_yes(raw):
+                    state.phase = "discover"
+                else:
+                    state.intent = "emergency"
+                    state.issue = state.issue or "Active leak"
+                    return self._escalate(state, started, state.issue or "Active leak")
+            state.phase = "discover"
+
+        level, emergency = classify_emergency(raw)
+        if level == "definite" and emergency:
             self._fill(state, raw)
             state.intent = "emergency"
             state.issue = emergency
             return self._escalate(state, started, emergency)
+        if level == "uncertain":
+            self._fill(state, raw)
+            state.phase = "triage"
+            state.issue = state.issue or "Possible leak"
+            return self._finish(
+                state,
+                "Is water actively spreading right now? If it is, I'll get the on-call technician. If it's a slow drip, I can schedule a visit.",
+                started,
+            )
+
+        if looks_spanish(raw):
+            state.language = "es"
 
         if wants_human(raw):
             self._fill(state, raw)
@@ -115,6 +160,16 @@ class Engine:
             state.outcome = "missed"
             state.phase = "closed"
             return self._finish(state, "No problem. We'll be here when you're ready. Goodbye.", started)
+
+        if state.language == "es" and state.phase == "discover" and not state.issue:
+            self._fill(state, raw)
+            if state.issue or detect_intent(raw) == "new_job":
+                return self._continue_intake(state, raw, started)
+            return self._finish(
+                state,
+                "Puedo seguir en español. I can book a visit or transfer an emergency. What's going on — a leak, no heat, or something dangerous?",
+                started,
+            )
 
         if state.phase == "discover" and is_spam(raw):
             state.intent = "spam"
@@ -152,12 +207,6 @@ class Engine:
 
         if state.phase == "existing_lookup":
             self._fill(state, raw)
-            if not state.name:
-                guessed = guess_bare_name(raw)
-                if guessed:
-                    state.name = guessed
-            if not state.name and not state.phone:
-                return self._finish(state, "Sorry, I missed the name. What name is the appointment under?", started)
             return self._existing(state, raw, started)
 
         if state.phase == "existing_action":
@@ -180,15 +229,18 @@ class Engine:
 
         if state.phase == "quote_decision":
             self._fill(state, raw)
-            if is_yes(raw):
-                return self._continue_intake(state, raw, started)
-            if is_no(raw):
+            if is_no(raw) and not is_yes(raw):
                 return self._decline_quote(state, started)
+            if is_yes(raw) or state.name or state.phone:
+                return self._continue_intake(state, raw, started)
             return self._finish(state, self._quote_line(state) + " Should I book the diagnostic?", started)
 
         if state.phase == "offer":
             self._fill(state, raw)
             return self._on_offer(state, raw, started)
+
+        if state.phase == "confirm_cancel":
+            return self._on_confirm_cancel(state, raw, started)
 
         if state.phase == "confirm":
             self._fill(state, raw)
@@ -201,38 +253,47 @@ class Engine:
         )
 
     def _fill(self, state: SessionState, text: str) -> None:
+        if not state.caller_id:
+            pass
         phone, _ = extract_phone(text)
-        if phone and not state.phone:
+        if phone and (not state.phone or is_correction(text)):
             state.phone = phone
-        if not state.zip:
-            found_zip = extract_zip(text)
-            if found_zip:
-                state.zip = found_zip
+        found_zip = extract_zip(text)
+        if found_zip and (not state.zip or is_correction(text)):
+            state.zip = found_zip
         if not state.city:
             city = extract_city(text, self.config.cities)
             if city:
                 state.city = city
-        if not state.street:
-            street = extract_street(text)
-            if street:
-                state.street = street
+        street = extract_street(text, self.config.cities)
+        if street and (not state.street or is_correction(text)):
+            state.street = street
         if state.street:
             state.address = _compose_address(state.street, state.city, state.zip)
         issue = extract_issue(text)
         if issue and not state.issue:
             state.issue = issue
-        if not state.name:
-            if state.phase == "collect_name":
-                guessed = guess_bare_name(text)
-                if guessed:
-                    state.name = guessed
-            else:
-                introduced = extract_introduced_name(text)
-                if introduced:
-                    state.name = introduced
+        elif not state.issue and re.search(r"\b(inspect\w*|checked)\b", text, re.I):
+            state.issue = "Inspection"
+        spelled = spelled_word(text)
+        if state.name and is_correction(text):
+            parts = state.name.split()
+            replacement = spelled
+            meant = re.search(r"\b(?:it's|its|meant)\s+([A-Za-z][A-Za-z']+)\b", text, re.I)
+            if replacement is None and meant and meant.group(1).lower() not in {"the", "a", "my"}:
+                replacement = meant.group(1).capitalize()
+            if replacement and parts:
+                parts[-1] = replacement
+                state.name = " ".join(parts)
+        elif not state.name or (is_correction(text) and guess_bare_name(text)):
+            guessed = guess_bare_name(text)
+            if guessed and (state.phase == "collect_name" or not state.name or is_correction(text)):
+                if state.phase == "collect_name" or is_correction(text) or " " in guessed:
+                    if not state.name or is_correction(text) or state.phase == "collect_name":
+                        state.name = guessed
         if state.phase == "collect_issue" and not state.issue:
             cleaned = " ".join(text.split())
-            if len(cleaned.split()) >= 3:
+            if len(cleaned.split()) >= 3 and not is_spam(cleaned):
                 state.issue = cleaned[:80].rstrip(".")
 
     def _continue_intake(self, state: SessionState, text: str, started: float) -> TurnResult:
@@ -241,6 +302,7 @@ class Engine:
             return self._finish(state, "What seems to be the problem at the property?", started)
         if state.intent == "quote" and not state.quote_given:
             state.quote_given = True
+            state.wish = text
             state.phase = "quote_decision"
             return self._finish(
                 state,
@@ -249,7 +311,7 @@ class Engine:
             )
         if not state.name:
             state.phase = "collect_name"
-            return self._finish(state, "Who am I speaking with?", started)
+            return self._finish(state, "Who am I speaking with? Can I get your first and last name?", started)
         if not state.phone:
             state.phase = "collect_phone"
             return self._finish(state, "What's the best phone number for the technician?", started)
@@ -265,6 +327,8 @@ class Engine:
 
     def _offer(self, state: SessionState, text: str, started: float) -> TurnResult:
         preference = parse_preference(text, self.now)
+        if preference is not None:
+            state.wish = text
         slots, relaxed = available_slots(
             self.config,
             self.now,
@@ -282,12 +346,26 @@ class Engine:
                 started,
                 events,
             )
+        if relaxed and preference is not None and preference.earliest is not None and preference.day is not None:
+            latest = latest_on_day(self.config, self.now, self.calendar.busy(), preference.day)
+            if latest is not None:
+                state.offered = [latest.isoformat()]
+                state.selected = latest.isoformat()
+                state.phase = "confirm"
+                return self._finish(
+                    state,
+                    f"Nothing starts after {preference.label.split('after ')[-1]}. "
+                    f"The latest window is {format_slot(latest)}. Should I lock that in?",
+                    started,
+                )
         state.offered = [slot.isoformat() for slot in slots]
         choice = match_offered(slots, text)
+        if preference is not None and preference.around is not None and choice is None:
+            choice = slots[0]
         prefix = ""
         if relaxed and preference is not None:
-            prefix = f"I don't have a {preference.label} opening. "
-        if choice is not None:
+            prefix = f"I don't have a {preference.label} opening. The next open windows are different. "
+        if choice is not None and (preference is None or _choice_fits(choice, preference)):
             state.selected = choice.isoformat()
             state.phase = "confirm"
             return self._finish(state, prefix + self._confirm_line(state, choice), started)
@@ -317,6 +395,9 @@ class Engine:
 
     def _on_confirm(self, state: SessionState, text: str, started: float) -> TurnResult:
         offered = self._offered(state)
+        preference = parse_preference(text, self.now)
+        if preference is not None and (is_correction(text) or not _choice_fits(self._selected(state), preference)):
+            return self._offer(state, text, started)
         choice = match_offered(offered, text)
         if choice is not None and choice.isoformat() != state.selected:
             state.selected = choice.isoformat()
@@ -334,39 +415,72 @@ class Engine:
             )
         return self._finish(state, "Should I lock that in, or would you rather pick a different time?", started)
 
+    def _on_confirm_cancel(self, state: SessionState, text: str, started: float) -> TurnResult:
+        if is_yes(text) and state.booking_id:
+            return self._cancel_booking(state, started)
+        if is_no(text):
+            state.phase = "closed"
+            state.outcome = "kept"
+            state.pending_action = None
+            return self._finish(state, "I'll leave that visit on the calendar. Call us if you need a new time.", started)
+        return self._finish(state, "Should I cancel that visit? Please say yes or no.", started)
+
     def _book(self, state: SessionState, started: float, reschedule: bool) -> TurnResult:
+        if state.booking_id and not reschedule and state.outcome == "booked":
+            start = datetime.fromisoformat(state.selected) if state.selected else self.now
+            return self._finish(
+                state,
+                f"You're already booked for {format_slot(start)} at {state.address}.",
+                started,
+            )
         if not state.selected:
-            return self._offer(state, "", started)
+            return self._offer(state, state.wish or "", started)
         start = datetime.fromisoformat(state.selected)
         end = start + timedelta(minutes=self.config.slot_minutes)
-        if reschedule and state.booking_id:
-            record = self.calendar.reschedule(state.booking_id, start, end)
-            outcome = "rescheduled"
-            event_name = "job.rescheduled"
-            say = (
-                f"You're moved to {format_slot(start)} at {state.address}. "
-                f"I'll text a confirmation to {format_phone(state.phone)}."
-            )
-        else:
-            record = self.calendar.book(
-                {
-                    "id": new_booking_id(),
-                    "call_id": state.call_id,
-                    "name": state.name,
-                    "phone": state.phone,
-                    "address": state.address,
-                    "issue": state.issue,
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                }
-            )
-            state.booking_id = record["id"]
-            outcome = "booked"
-            event_name = "job.booked"
-            say = (
-                f"You're booked for {format_slot(start)} at {state.address}. "
-                f"I'll text a confirmation to {format_phone(state.phone)}. "
-                f"The diagnostic visit is ${self.config.diagnostic_fee_usd} and we waive it if you approve the repair."
+        try:
+            if reschedule and state.booking_id:
+                record = self.calendar.reschedule(state.booking_id, start, end)
+                outcome = "rescheduled"
+                event_name = "job.rescheduled"
+                say = (
+                    f"You're moved to {format_slot(start)} at {state.address}. "
+                    f"I'll text a confirmation to {format_phone(state.phone)}."
+                )
+            else:
+                record = self.calendar.book(
+                    {
+                        "id": new_booking_id(),
+                        "call_id": state.call_id,
+                        "name": state.name,
+                        "phone": state.phone,
+                        "address": state.address,
+                        "issue": state.issue,
+                        "start": start.isoformat(),
+                        "end": end.isoformat(),
+                    }
+                )
+                state.booking_id = record["id"]
+                outcome = "booked"
+                event_name = "job.booked"
+                fee = f"The diagnostic visit is ${self.config.diagnostic_fee_usd} and we waive it if you approve the repair."
+                if self._after_hours(self.now):
+                    fee += f" Because you called after hours, the trip fee is ${self.config.after_hours_fee_usd}."
+                say = (
+                    f"You're booked for {format_slot(start)} at {state.address}. "
+                    f"I'll text a confirmation to {format_phone(state.phone)}. "
+                    f"{fee}"
+                )
+        except SlotTaken:
+            state.selected = None
+            state.phase = "offer"
+            slots, _ = available_slots(self.config, self.now, self.calendar.busy(), limit=3)
+            state.offered = [slot.isoformat() for slot in slots]
+            if not slots:
+                return self._finish(state, "That time was just taken, and I don't have another window this week.", started)
+            return self._finish(
+                state,
+                f"That time was just taken. I can come {join_slots(slots)}. Which works best?",
+                started,
             )
         state.outcome = outcome
         state.phase = "closed"
@@ -384,42 +498,43 @@ class Engine:
             state.pending_action = "cancel"
         elif wants_reschedule(text):
             state.pending_action = "reschedule"
-        if not state.name and not state.phone:
+        if parse_preference(text, self.now) is not None or "earliest" in text.lower():
+            state.wish = text
+        phone = state.phone or caller_id_digits(state.caller_id)
+        if not phone:
             state.phase = "existing_lookup"
-            return self._finish(state, "I can pull that up. What name is the appointment under?", started)
-        found = self.calendar.find(state.name, state.phone)
-        if not found:
-            state.intent = None
-            state.phase = "discover"
-            state.pending_action = None
             return self._finish(
                 state,
-                "I don't have an appointment under that name. If this is a new repair, tell me what's going on.",
+                "I can pull that up, but I won't change it from a name alone. What phone number is on the appointment?",
+                started,
+            )
+        found = self.calendar.find(None, phone)
+        if not found:
+            state.phase = "discover"
+            state.pending_action = None
+            state.intent = None
+            return self._finish(
+                state,
+                "I don't have an appointment under that phone number. If this is a new repair, tell me what's going on.",
                 started,
             )
         state.booking_id = found["id"]
-        state.name = state.name or found.get("name")
-        state.phone = state.phone or found.get("phone")
+        state.name = found.get("name") or state.name
+        state.phone = found.get("phone") or phone
         state.address = state.address or found.get("address")
         state.issue = state.issue or found.get("issue")
         when = format_slot(datetime.fromisoformat(found["start"]))
         if state.pending_action == "cancel":
-            cancelled = self.calendar.cancel(found["id"])
-            state.outcome = "cancelled"
-            state.phase = "closed"
-            events = [
-                {"type": "booking", "payload": cancelled},
-                {"type": "sms", "payload": {"to": state.phone, "body": f"{self.config.name}: your visit on {when} is cancelled."}},
-                {"type": "webhook", "payload": self._webhook(state, "job.cancelled", None)},
-            ]
-            return self._finish(
-                state,
-                f"I've cancelled the visit on {when}. Call us if you need a new time.",
-                started,
-                events,
-            )
+            if state.phase != "confirm_cancel":
+                state.phase = "confirm_cancel"
+                return self._finish(
+                    state,
+                    f"Your visit {when} at {found.get('address')} — cancel it?",
+                    started,
+                )
+            return self._cancel_booking(state, started)
         if state.pending_action == "reschedule":
-            result = self._offer(state, text, started)
+            result = self._offer(state, state.wish or text, started)
             result.say = f"You're currently set for {when}. " + result.say
             return result
         state.phase = "existing_action"
@@ -427,6 +542,26 @@ class Engine:
             state,
             f"I have you down for {when} at {found.get('address')}. Do you want to reschedule or cancel?",
             started,
+        )
+
+    def _cancel_booking(self, state: SessionState, started: float) -> TurnResult:
+        found = self.calendar.find(None, state.phone)
+        when = "that visit"
+        if found:
+            when = format_slot(datetime.fromisoformat(found["start"]))
+        cancelled = self.calendar.cancel(state.booking_id or (found or {}).get("id"))
+        state.outcome = "cancelled"
+        state.phase = "closed"
+        events = [
+            {"type": "booking", "payload": cancelled},
+            {"type": "sms", "payload": {"to": state.phone, "body": f"{self.config.name}: your visit on {when} is cancelled."}},
+            {"type": "webhook", "payload": self._webhook(state, "job.cancelled", None)},
+        ]
+        return self._finish(
+            state,
+            f"I've cancelled the visit on {when}. Call us if you need a new time.",
+            started,
+            events,
         )
 
     def _escalate(self, state: SessionState, started: float, reason: str) -> TurnResult:
@@ -441,7 +576,7 @@ class Engine:
         else:
             say = (
                 f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
-                "Please stay on the line."
+                f"Please stay on the line. The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
             )
         if state.address:
             say += f" I have the service address as {state.address}."
@@ -496,13 +631,16 @@ class Engine:
     def _quote_line(self, state: SessionState) -> str:
         rule = self.config.price_for(f"{state.issue or ''}")
         fee = self.config.diagnostic_fee_usd
+        policy = ""
+        if state.wish and is_haggle(state.wish):
+            policy = " We don't match or beat another company's price."
         if rule is None:
             return (
-                f"Most visits start with a ${fee} diagnostic fee that we waive if you approve the repair."
+                f"Most visits start with a ${fee} diagnostic fee that we waive if you approve the repair.{policy}"
             )
         return (
             f"For {rule.label.lower()}, jobs typically run ${rule.low_usd:,} to ${rule.high_usd:,}, "
-            f"plus a ${fee} diagnostic fee that we waive if you approve the repair."
+            f"plus a ${fee} diagnostic fee that we waive if you approve the repair.{policy}"
         )
 
     def _sms(self, state: SessionState, start: datetime, outcome: str) -> str:
@@ -543,7 +681,20 @@ class Engine:
 
     def _confirm_line(self, state: SessionState, moment: datetime) -> str:
         where = state.address or "the service address"
-        return f"Should I lock that in for {format_slot(moment)} at {where}?"
+        phone = format_phone(state.phone)
+        phone_bit = f" I'll text {phone}." if phone else ""
+        return f"Should I lock that in for {format_slot(moment)} at {where}?{phone_bit}"
+
+    def _selected(self, state: SessionState) -> datetime | None:
+        if not state.selected:
+            return None
+        return datetime.fromisoformat(state.selected)
+
+    def _after_hours(self, moment: datetime) -> bool:
+        hours = self.config.hours.get(moment.weekday())
+        if hours is None:
+            return True
+        return not (hours.open <= moment.time() < hours.close)
 
     def _offered(self, state: SessionState) -> list[datetime]:
         return [datetime.fromisoformat(value) for value in state.offered]
@@ -564,6 +715,7 @@ class Engine:
     ) -> TurnResult:
         fresh = events or []
         state.events.extend(fresh)
+        state.last_reply = say
         elapsed = (perf_counter() - started) * 1000
         return TurnResult(say=say, events=fresh, latency_ms=elapsed)
 
@@ -576,13 +728,15 @@ def _compose_address(street: str, city: str | None, zip_code: str | None) -> str
 
 
 def _choice_fits(choice: datetime | None, preference) -> bool:
-    if choice is None:
+    if choice is None or preference is None:
         return False
     if preference.day is not None and choice.date() != preference.day.date():
         return False
+    if preference.earliest is not None and choice.time() < preference.earliest:
+        return False
     if preference.part == "morning" and choice.hour >= 12:
         return False
-    if preference.part == "afternoon" and not (12 <= choice.hour < 16):
+    if preference.part == "afternoon" and not (12 <= choice.hour < 17):
         return False
     if preference.part == "evening" and choice.hour < 16:
         return False

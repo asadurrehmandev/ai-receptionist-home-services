@@ -168,7 +168,8 @@ export function Simulator() {
           <h1 className="mt-1 font-display text-4xl">Call simulator</h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">
             Talk with the browser’s microphone or type as the homeowner. Riley answers with the same brain the Twilio
-            webhook uses. Without an LLM key, the replies are the rule-based receptionist.
+            webhook uses. Without an Anthropic key, that brain is the rule receptionist. With a key, Claude calls the
+            calendar tools and cannot invent a time or a price.
           </p>
         </div>
       </header>

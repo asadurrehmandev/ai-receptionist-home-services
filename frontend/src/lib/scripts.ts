@@ -53,6 +53,7 @@ export const SCRIPTS: CallerScript[] = [
     detail: "Existing customer already on the board",
     turns: [
       "Hi this is Dana Cho, I need to reschedule my appointment to the earliest you have.",
+      "512-555-0133",
       "yes",
     ],
   },

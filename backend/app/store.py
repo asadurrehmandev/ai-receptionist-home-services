@@ -8,7 +8,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from app.agent.calendar import _digits, _name_matches
+from app.agent.calendar import SlotTaken, _digits, _name_matches
 from app.agent.engine import SessionState, summarize
 from app.metrics import summarize as summarize_latency
 
@@ -76,14 +76,48 @@ class Store:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
-        self.conn.commit()
+        self._guard_slots()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _guard_slots(self) -> None:
+        self.conn.execute("BEGIN IMMEDIATE")
+        self.conn.execute(
+            """
+            UPDATE bookings SET status='cancelled'
+            WHERE status='booked' AND rowid NOT IN (
+                SELECT MIN(rowid) FROM bookings WHERE status='booked' GROUP BY start_at
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS bookings_active_start ON bookings(start_at) WHERE status='booked'"
+        )
+        self.conn.execute("COMMIT")
+
+    def purge_before(self, cutoff: datetime) -> int:
+        """Delete calls, turns, leads, and events older than the retention cutoff."""
+        stamp = cutoff.isoformat()
+        with self._lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            rows = self.conn.execute("SELECT id FROM calls WHERE started_at < ?", (stamp,)).fetchall()
+            ids = [row["id"] for row in rows]
+            for call_id in ids:
+                self.conn.execute("DELETE FROM turns WHERE call_id=?", (call_id,))
+                self.conn.execute("DELETE FROM events WHERE call_id=?", (call_id,))
+                self.conn.execute("DELETE FROM leads WHERE call_id=?", (call_id,))
+                self.conn.execute("DELETE FROM calls WHERE id=?", (call_id,))
+            self.conn.execute(
+                "DELETE FROM bookings WHERE status!='booked' AND start_at < ?",
+                (stamp,),
+            )
+            self.conn.execute("COMMIT")
+        return len(ids)
 
     def wipe(self) -> None:
         with self._lock:
@@ -208,24 +242,47 @@ class Store:
             "status": "booked",
         }
         with self._lock:
-            self.conn.execute(
-                """
-                INSERT INTO bookings (id, call_id, name, phone, address, issue, start_at, end_at, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record["id"],
-                    record["call_id"],
-                    record["name"],
-                    record["phone"],
-                    record["address"],
-                    record["issue"],
-                    record["start"],
-                    record["end"],
-                    record["status"],
-                ),
-            )
-            self.conn.commit()
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if record["call_id"]:
+                    prior = self.conn.execute(
+                        "SELECT * FROM bookings WHERE call_id=? AND status='booked'",
+                        (record["call_id"],),
+                    ).fetchone()
+                    if prior is not None:
+                        self.conn.execute("COMMIT")
+                        return _booking_dict(prior)
+                conflict = self.conn.execute(
+                    """
+                    SELECT id FROM bookings
+                    WHERE status='booked' AND start_at < ? AND end_at > ?
+                    """,
+                    (record["end"], record["start"]),
+                ).fetchone()
+                if conflict is not None:
+                    self.conn.execute("ROLLBACK")
+                    raise SlotTaken(record["start"])
+                self.conn.execute(
+                    """
+                    INSERT INTO bookings (id, call_id, name, phone, address, issue, start_at, end_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record["id"],
+                        record["call_id"],
+                        record["name"],
+                        record["phone"],
+                        record["address"],
+                        record["issue"],
+                        record["start"],
+                        record["end"],
+                        record["status"],
+                    ),
+                )
+                self.conn.execute("COMMIT")
+            except sqlite3.IntegrityError as exc:
+                self.conn.execute("ROLLBACK")
+                raise SlotTaken(record["start"]) from exc
         return record
 
     def cancel_booking(self, booking_id: str) -> dict:
@@ -239,11 +296,22 @@ class Store:
 
     def reschedule_booking(self, booking_id: str, start: datetime, end: datetime) -> dict:
         with self._lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            conflict = self.conn.execute(
+                """
+                SELECT id FROM bookings
+                WHERE status='booked' AND id!=? AND start_at < ? AND end_at > ?
+                """,
+                (booking_id, end.isoformat(), start.isoformat()),
+            ).fetchone()
+            if conflict is not None:
+                self.conn.execute("ROLLBACK")
+                raise SlotTaken(start.isoformat())
             self.conn.execute(
                 "UPDATE bookings SET start_at=?, end_at=?, status='booked' WHERE id=?",
                 (start.isoformat(), end.isoformat(), booking_id),
             )
-            self.conn.commit()
+            self.conn.execute("COMMIT")
             row = self.conn.execute("SELECT * FROM bookings WHERE id=?", (booking_id,)).fetchone()
         if row is None:
             raise KeyError(booking_id)

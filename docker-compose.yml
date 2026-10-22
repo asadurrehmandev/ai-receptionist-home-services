@@ -5,6 +5,7 @@ services:
       - "43123:43123"
     environment:
       SEED_ON_START: "1"
+      DEMO_MODE: "1"
       DATABASE_PATH: /app/data/receptionist.db
       STATIC_DIR: /app/frontend/dist
     volumes:

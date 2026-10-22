@@ -36,7 +36,7 @@ export function Board() {
     { label: "Calls handled", value: String(data.total_calls), note: "Simulator and phone" },
     { label: "Jobs booked", value: String(booked), note: "On the mock calendar" },
     { label: "Escalated", value: String(escalated), note: `To ${data.on_call.name}` },
-    { label: "Median reply", value: formatMs(data.metrics.p50_ms), note: `p95 ${formatMs(data.metrics.p95_ms)}` },
+    { label: "Median reply", value: formatMs(data.metrics.p50_ms), note: `end to end · p95 ${formatMs(data.metrics.p95_ms)}` },
   ];
 
   return (

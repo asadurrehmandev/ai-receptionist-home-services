@@ -29,8 +29,10 @@ def signature_is_valid(url: str, params: dict[str, str], token: str, provided: s
 
 
 def public_url(request: Request, settings: Settings) -> str:
+    query = request.url.query
+    path = request.url.path + (("?" + query) if query else "")
     if settings.public_base_url:
-        return settings.public_base_url.rstrip("/") + request.url.path
+        return settings.public_base_url.rstrip("/") + path
     return str(request.url)
 
 
@@ -46,12 +48,13 @@ def stream_ws_url(request: Request, settings: Settings) -> str:
     return base + "/api/voice/stream"
 
 
-def gather_twiml(say: str, action: str, voice: str) -> str:
+def gather_twiml(say: str, action: str, voice: str, language: str = "en-US") -> str:
     spoken = escape(say)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
-        f'<Gather input="speech" action="{escape(action)}" method="POST" speechTimeout="auto" language="en-US">'
+        f'<Gather input="speech" action="{escape(action)}" method="POST" speechTimeout="auto" '
+        f'timeout="5" actionOnEmptyResult="true" language="{escape(language)}">'
         f'<Say voice="{escape(voice)}">{spoken}</Say>'
         "</Gather>"
         f'<Say voice="{escape(voice)}">I did not catch that. Please call again.</Say>'
@@ -70,12 +73,14 @@ def say_and_hangup(say: str, voice: str) -> str:
     )
 
 
-def dial_twiml(say: str, number: str, voice: str) -> str:
+def dial_twiml(say: str, number: str, voice: str, action: str, caller_id: str) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
         f'<Say voice="{escape(voice)}">{escape(say)}</Say>'
-        f"<Dial>{escape(number)}</Dial>"
+        f'<Dial timeout="20" action="{escape(action)}" callerId="{escape(caller_id)}">'
+        f"<Number>{escape(number)}</Number>"
+        "</Dial>"
         "</Response>"
     )
 

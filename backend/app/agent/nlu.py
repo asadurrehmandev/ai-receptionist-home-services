@@ -1,22 +1,48 @@
-"""Intent, slot, and emergency detection for the rule-based brain.
+"""Intent, slot, and emergency detection.
 
-The matchers stay deterministic so the scenario suite and the phone path
-share one behavior when no LLM key is configured. An LLM, when present,
-may rephrase the spoken line. It does not decide bookings or transfers.
+Matchers stay deterministic so the phone path and the no-key fallback share
+one behavior. When Claude is configured it may choose tools, but it does not
+invent times, prices, or transfers. A definite emergency is forced here,
+before any model call.
 """
 
 from __future__ import annotations
 
 import re
 
+# Definite emergencies. Purchase, quote, and "last year" lines are excluded first.
 EMERGENCY_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\b(burst pipe|pipe burst|burst water pipe|pipe just burst|busted pipe)\b", "Burst pipe"),
-    (r"\b(gas smell|smell of gas|smells like gas|smell gas|smelling gas|rotten eggs?)\b", "Gas smell"),
-    (r"\b(carbon monoxide|co alarm|co detector)\b", "Carbon monoxide"),
-    (r"\b(sewer backup|sewage backup|sewage coming|raw sewage)\b", "Sewer backup"),
-    (r"\b(flooding|flooded basement|basement flooded|house is flooded|water everywhere)\b", "Active flooding"),
+    (r"\b(burst(?:ed)? pipe|pipe burst|busted pipe|pipe just burst|pipe (?:broke|broken|split))\b", "Burst pipe"),
+    (r"\b(gas smell|smell of gas|smells like gas|smell gas|smelling gas|smell(?:s|ing)? (?:like )?gas|rotten eggs?|sulfur smell|hissing gas|gas (?:is )?hissing|gas leak)\b", "Gas smell"),
+    (r"\bhuele a gas\b", "Gas smell"),
+    (r"\b(carbon monoxide|co alarm|co detector).{0,40}\b(going off|beeping|chirping|won't stop|wont stop|alarm)\b", "Carbon monoxide"),
+    (r"\b(going off|beeping|chirping).{0,40}\b(carbon monoxide|co alarm|co detector)\b", "Carbon monoxide"),
+    (r"\b(co|carbon monoxide) alarm\b", "Carbon monoxide"),
+    (r"\b(sewer backup|sewage backup|sewage coming|raw sewage|sewage is coming|sewer is coming|sewage is backing|sewage backing)\b", "Sewer backup"),
+    (r"\b(flooding|flooded basement|basement flooded|house is flooded|water everywhere|flooding the garage)\b", "Active flooding"),
     (r"\b(sparking|electrical fire|outlet (is )?smoking|burning smell from the panel|smoke from the outlet)\b", "Electrical hazard"),
-    (r"no heat.{0,48}(baby|infant|newborn|elderly|freezing)|(baby|infant|elderly|freezing).{0,48}no heat", "No heat with a vulnerable occupant"),
+    (
+        r"(no heat|furnace|heat is out|heater).{0,80}(baby|infant|newborn|elderly|freezing|shivering|30 degrees|28 degrees)"
+        r"|(baby|infant|newborn|elderly|freezing|shivering).{0,80}(no heat|furnace|heat)",
+        "No heat with a vulnerable occupant",
+    ),
+    (
+        r"(headache|dizzy|dizziness|nauseat\w*|nauseous|feels? sick).{0,80}(furnace|heater|carbon|gas)"
+        r"|(furnace|heater).{0,80}(headache|dizzy|dizziness|nauseat\w*|nauseous)",
+        "Possible carbon monoxide",
+    ),
+    (
+        r"(water heater|tank).{0,60}(leaking|leak|flooding|pouring).{0,40}(won't stop|wont stop|all over|garage|everywhere|flood)"
+        r"|(won't stop|wont stop|all over).{0,40}(water heater|garage)",
+        "Active water heater leak",
+    ),
+    (r"\b(pouring|gushing|coming) (?:through|from) the ceiling\b|\bwater (?:is |won't stop |wont stop )?pouring\b|\bceiling (?:is )?(?:pouring|gushing|leaking)\b", "Water through the ceiling"),
+    (r"\b(agua).{0,40}(techo|no para)\b", "Water through the ceiling"),
+)
+
+UNCERTAIN_WATER = re.compile(
+    r"\b(water heater|pipe|ceiling|basement).{0,40}\b(leak|leaking|dripping)\b|\b(leak|leaking)\b.{0,40}\b(water heater|pipe|ceiling)\b",
+    re.I,
 )
 
 SPAM_PATTERNS: tuple[str, ...] = (
@@ -32,22 +58,24 @@ SPAM_PATTERNS: tuple[str, ...] = (
     r"marketing services",
     r"lead generation",
     r"press 1 to",
+    r"auto loan",
 )
 
 SERVICE_PROBLEM = re.compile(
-    r"\b(drains?|clogs?|clogged|leaks?|leaking|toilets?|faucets?|disposals?|water heaters?|"
+    r"\b(drains?|clogs?|clogged|unclog|leaks?|leaking|toilets?|faucets?|disposals?|water heaters?|"
     r"hot water|furnaces?|no heat|not cooling|air condition\w*|a/c|\bac\b|sewers?|repairs?|"
-    r"broken|not working|backing up|backed up|jammed|sinks?)\b",
+    r"broken|not working|backing up|backed up|jammed|sinks?|heeder|heder)\b",
     re.I,
 )
 
 EXISTING = re.compile(
     r"\b(reschedul\w*|re-schedule|move my appointment|cancel my (appointment|booking|visit)|"
-    r"existing (appointment|booking)|already (booked|scheduled)|my appointment)\b",
+    r"existing (appointment|booking)|already (booked|scheduled)|my appointment|need to cancel|"
+    r"want to cancel|cancel the appointment)\b",
     re.I,
 )
 
-QUOTE = re.compile(r"\b(how much|how many|price|cost|estimate|quote|ballpark)\b", re.I)
+QUOTE = re.compile(r"\b(how much|how many|price|cost|estimate|quot\w*|ballpark|beat that|beat this|can you beat)\b", re.I)
 
 HUMAN = re.compile(
     r"\b(real person|live person|real human|talk to (a )?(human|person|manager|supervisor)|"
@@ -70,20 +98,22 @@ NO = re.compile(r"\b(no|nope|nah|different time|another time)\b", re.I)
 PHONE = re.compile(r"(?:\+?1[\s.\-]?)?(?:\(\d{3}\)|\d{3})[\s.\-]?\d{3}[\s.\-]\d{4}\b")
 PHONE_COMPACT = re.compile(r"\b(?:\+?1)?(\d{10})\b")
 ZIP = re.compile(r"\b(\d{5})(?:-\d{4})?\b")
+STREET_SUFFIX = (
+    r"Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way|Court|Ct|"
+    r"Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy|Plaza|Loop|Pass|Cove|Path|Highway|Hwy|FM|RR"
+)
 STREET = re.compile(
-    r"\b(\d{1,6}\s+(?:[A-Za-z0-9.'#-]+\s+){0,6}"
-    r"(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way|Court|Ct|"
-    r"Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy))\b",
+    rf"\b(\d{{1,6}}\s+(?:[A-Za-z0-9.'#-]+\s+){{0,6}}(?:{STREET_SUFFIX}))\b",
     re.I,
 )
 
 ISSUE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
-    (("water heater", "no hot water", "hot water"), "Water heater"),
+    (("water heater", "water heeder", "water heder", "no hot water", "hot water"), "Water heater"),
     (("clog", "drain", "backing up", "backed up", "slow drain"), "Clogged drain"),
     (("toilet",), "Toilet"),
     (("faucet", "tap"), "Faucet"),
     (("disposal",), "Garbage disposal"),
-    (("not cooling", "air condition", "a/c", " ac "), "AC repair"),
+    (("not cooling", "air condition", "a/c", " ac ", "blowing warm"), "AC repair"),
     (("furnace", "no heat", "not heating"), "Heating repair"),
     (("sewer", "sewage"), "Sewer line"),
     (("leak",), "Leak"),
@@ -101,7 +131,6 @@ NAME_STOP = {
     "looking",
     "here",
     "scheduled",
-    "calling",
     "from",
     "with",
     "need",
@@ -110,12 +139,67 @@ NAME_STOP = {
     "but",
     "my",
     "please",
+    "so",
+    "worried",
+    "sorry",
+    "hold",
+    "okay",
+    "ok",
+    "dog",
+    "hi",
+    "hey",
+    "um",
+    "uh",
+    "well",
+    "yes",
+    "no",
+    "yeah",
+    "yep",
+    "earliest",
+    "calling",
+    "really",
+    "very",
+    "its",
+    "it's",
 }
+
+DIGIT_WORDS = {
+    "zero": "0",
+    "oh": "0",
+    "o": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+}
+
+SPANISH_HINTS = (
+    "hola",
+    "gracias",
+    "por favor",
+    "tengo",
+    "fuga",
+    "agua",
+    "fregadero",
+    "huele",
+    "cocina",
+    "ayuda",
+    "estufa",
+    "cita",
+    "calefaccion",
+    "baño",
+    "bano",
+)
 
 
 def normalize(text: str) -> str:
     cleaned = text.strip().lower()
-    cleaned = cleaned.replace("’", "'")
+    cleaned = cleaned.replace("’", "'").replace("—", " ").replace("–", " ")
     cleaned = re.sub(r"[.!?]+", " ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
@@ -131,20 +215,73 @@ def _mask_negations(text: str) -> str:
     )
 
 
-def detect_emergency(text: str) -> str | None:
-    masked = _mask_negations(normalize(text))
+def _false_emergency(text: str) -> bool:
+    """Purchase, quote, past-tense, and explicitly non-urgent lines."""
+    if re.search(r"\b(not an emergency|no emergency|isn't an emergency|isnt an emergency)\b", text):
+        return True
+    if re.search(r"\b(last year|last winter|last month|years ago|used to)\b", text):
+        return True
+    if re.search(r"\b(install|replace|replacing|quote|purchase|buy)\b.{0,48}\b(carbon monoxide|co detector|detector)\b", text):
+        return True
+    if re.search(r"\b(carbon monoxide|co) detector\b.{0,32}\b(install|replace|quote)\b", text):
+        return True
+    if re.search(r"\bgas bill\b", text):
+        return True
+    if re.search(r"\b(quote|replace|replacing|install|new)\b.{0,40}\bgas water heater\b", text):
+        return True
+    if re.search(r"\bgas water heater\b.{0,40}\b(quote|replace|install|efficiency)\b", text):
+        return True
+    if re.search(r"\b(a little|slow drip|just a drip|dripping faucet)\b", text) and not re.search(
+        r"\b(won't stop|wont stop|all over|pouring|flood|everywhere|gas|sewage|carbon|sparking)\b", text
+    ):
+        return True
+    if re.search(r"\bfaucet\b", text) and not re.search(
+        r"\b(gas|sewage|carbon|sparking|burst|everywhere|pouring|flood)\b", text
+    ):
+        return True
+    return False
+
+
+def classify_emergency(text: str) -> tuple[str, str | None]:
+    """Return ('definite'|'uncertain'|'none', label)."""
+    norm = normalize(text)
+    if _false_emergency(norm):
+        return "none", None
+    masked = _mask_negations(norm)
     for pattern, label in EMERGENCY_PATTERNS:
         if re.search(pattern, masked, re.I):
-            return label
+            return "definite", label
+    if UNCERTAIN_WATER.search(masked) and not re.search(r"\b(faucet|drip|dripping|a little|slow)\b", masked):
+        return "uncertain", "Possible active leak"
+    return "none", None
+
+
+def detect_emergency(text: str) -> str | None:
+    level, label = classify_emergency(text)
+    if level == "definite":
+        return label
     return None
 
 
 def is_spam(text: str) -> bool:
     norm = normalize(text)
-    strong = re.search(r"seo|warranty|medicare|marketing services|lead generation|press 1 to", norm)
+    strong = re.search(
+        r"seo|warranty|medicare|marketing services|lead generation|press 1 to|auto loan|business listing",
+        norm,
+    )
     if SERVICE_PROBLEM.search(norm) and not strong:
         return False
     return any(re.search(pattern, norm) for pattern in SPAM_PATTERNS)
+
+
+def looks_spanish(text: str) -> bool:
+    norm = normalize(text)
+    hits = [hint for hint in SPANISH_HINTS if re.search(rf"\b{re.escape(hint)}\b", norm)]
+    return len(hits) >= 2 or "hola" in hits or "huele" in hits
+
+
+def is_haggle(text: str) -> bool:
+    return bool(re.search(r"\b(beat|match that|cheaper|for fifty|fifty bucks|discount|can you do it for)\b", normalize(text)))
 
 
 def detect_intent(text: str) -> str:
@@ -155,10 +292,11 @@ def detect_intent(text: str) -> str:
     norm = normalize(text)
     if EXISTING.search(norm):
         return "existing_booking"
-    if QUOTE.search(norm):
+    if QUOTE.search(norm) or is_haggle(norm):
         return "quote"
     if SERVICE_PROBLEM.search(norm) or re.search(
-        r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician)\b", norm
+        r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it)\b",
+        norm,
     ):
         return "new_job"
     return "unclear"
@@ -191,6 +329,10 @@ def wants_reschedule(text: str) -> bool:
     return bool(re.search(r"\b(reschedul\w*|re-schedule|move (my |the )?appointment|different (day|time))\b", normalize(text)))
 
 
+def is_correction(text: str) -> bool:
+    return bool(re.search(r"\b(no wait|sorry|actually|i meant|correction)\b", normalize(text)))
+
+
 def _digits(phone: str) -> str:
     digits = re.sub(r"\D", "", phone)
     if len(digits) == 11 and digits.startswith("1"):
@@ -198,8 +340,45 @@ def _digits(phone: str) -> str:
     return digits
 
 
+def expand_spoken_numbers(text: str) -> str:
+    """Turn 'five one two' and 'double five' into digits. Leaves other words alone."""
+
+    def convert(match: re.Match[str]) -> str:
+        words = match.group(0).split()
+        out: list[str] = []
+        index = 0
+        while index < len(words):
+            word = words[index].lower()
+            if word == "double" and index + 1 < len(words) and words[index + 1].lower() in DIGIT_WORDS:
+                out.append(DIGIT_WORDS[words[index + 1].lower()] * 2)
+                index += 2
+                continue
+            if word not in DIGIT_WORDS:
+                return match.group(0)
+            out.append(DIGIT_WORDS[word])
+            index += 1
+        return "".join(out)
+
+    pattern = re.compile(
+        r"\b(?:double|zero|oh|o|one|two|three|four|five|six|seven|eight|nine)"
+        r"(?:\s+(?:double|zero|oh|o|one|two|three|four|five|six|seven|eight|nine)){1,}\b",
+        re.I,
+    )
+    return pattern.sub(convert, text)
+
+
 def extract_phone(text: str) -> tuple[str | None, str]:
     """Return (10-digit phone, text with the phone removed)."""
+    source = expand_spoken_numbers(text)
+    if is_correction(text):
+        tail = re.split(r"no wait|sorry|actually|i meant", source, maxsplit=1, flags=re.I)[-1]
+        found, blanked = _phone_in(tail)
+        if found:
+            return found, blanked
+    return _phone_in(source)
+
+
+def _phone_in(text: str) -> tuple[str | None, str]:
     match = PHONE.search(text)
     if match:
         digits = _digits(match.group(0))
@@ -217,24 +396,51 @@ def extract_phone(text: str) -> tuple[str | None, str]:
 
 def extract_zip(text: str) -> str | None:
     _, stripped = extract_phone(text)
-    match = ZIP.search(stripped)
-    return match.group(1) if match else None
-
-
-def extract_street(text: str) -> str | None:
-    match = STREET.search(text)
-    if not match:
+    source = expand_spoken_numbers(stripped)
+    matches = list(ZIP.finditer(source))
+    if not matches:
         return None
-    street = re.sub(r"\s+", " ", match.group(1)).strip(" ,.")
+    usable: list[str] = []
+    for match in matches:
+        before = source[: match.start()].strip(" ,.")
+        token = match.group(1)
+        entire = source.strip(" ,.") == token
+        if not before and not entire:
+            continue
+        usable.append(token)
+    if not usable:
+        return None
+    return usable[-1]
+
+
+def _tidy_street(street: str) -> str:
+    street = re.sub(r"\s+", " ", street).strip(" ,.")
     parts = street.split()
     if not parts:
-        return None
-    parts[0] = parts[0]
+        return street
     titled = [parts[0]]
     for word in parts[1:]:
         titled.append(word.upper() if len(word) <= 2 and word.isalpha() else word.capitalize())
-    # Keep common street suffixes tidy (St, Ave already capitalized).
     return " ".join(titled)
+
+
+def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
+    match = STREET.search(text)
+    if match:
+        return _tidy_street(match.group(1))
+    city_pattern = "|".join(re.escape(city) for city in cities) if cities else r"$^"
+    loose = re.search(
+        rf"\b(\d{{1,6}}\s+[A-Za-z][A-Za-z.'-]{{1,}}(?:\s+[A-Za-z][A-Za-z.'-]{{1,}}){{0,3}})"
+        rf"(?=\s*(?:,|\b(?:{city_pattern})\b|\b\d{{5}}\b|$))",
+        text,
+        re.I,
+    )
+    if not loose:
+        return None
+    candidate = loose.group(1).strip(" ,.")
+    if re.search(r"\b(yes|yeah|earliest|tomorrow|phone|number)\b", candidate, re.I):
+        return None
+    return _tidy_street(candidate)
 
 
 def extract_city(text: str, cities: tuple[str, ...]) -> str | None:
@@ -246,50 +452,83 @@ def extract_city(text: str, cities: tuple[str, ...]) -> str | None:
 
 
 def extract_issue(text: str) -> str | None:
-    padded = f" {normalize(text)} "
+    padded = f" {normalize(text).replace('heeder', 'heater').replace('heder', 'heater')} "
     for keywords, label in ISSUE_RULES:
         for keyword in keywords:
-            token = keyword if keyword.startswith(" ") else keyword
-            if token in padded or keyword in padded:
+            if keyword in padded:
                 return label
     return None
 
 
+def spelled_word(text: str) -> str | None:
+    match = re.search(r"\b([A-Za-z](?:-[A-Za-z]){2,})\b", text)
+    if not match:
+        return None
+    letters = match.group(1).split("-")
+    if all(len(letter) == 1 for letter in letters):
+        return "".join(letters).capitalize()
+    return None
+
+
+def _plausible_name(value: str) -> bool:
+    parts = value.split()
+    if not 1 <= len(parts) <= 3:
+        return False
+    for part in parts:
+        if part.lower() in NAME_STOP or not re.fullmatch(r"[A-Za-z][A-Za-z']*", part):
+            return False
+    if parts[0].lower() in NAME_STOP:
+        return False
+    return True
+
+
 def extract_introduced_name(text: str) -> str | None:
     match = re.search(
-        r"\b(?:my name is|this is|i am|i'm|im)\s+([a-z][\w']*(?:\s+[a-z][\w']*){0,3})",
-        normalize(text),
+        r"\b(?:my name is|this is|i am|i'm|im)\s+([A-Za-z][\w']*(?:\s+[A-Za-z][\w']*){0,3})",
+        text,
         re.I,
     )
     if not match:
         return None
     chunk = match.group(1)
     chunk = re.split(
-        r"\b(?:and|but|at|from|in|on|my|calling|need|have|with|the|phone|i|please|cancel|reschedule|appointment|about)\b",
+        r"\b(?:and|but|at|from|in|on|my|calling|need|have|with|the|phone|i|please|cancel|reschedule|appointment|about|number)\b",
         chunk,
         maxsplit=1,
+        flags=re.I,
     )[0]
-    tokens = [re.sub(r"[^a-z']", "", token) for token in chunk.split()]
-    tokens = [token for token in tokens if token and token not in NAME_STOP and token.isalpha()]
-    tokens = tokens[:3]
-    if not tokens:
+    tokens = [re.sub(r"[^A-Za-z']", "", token) for token in chunk.split()]
+    tokens = [token for token in tokens if token and token.lower() not in NAME_STOP]
+    if not tokens or tokens[0].lower() in NAME_STOP:
         return None
-    if tokens[0] in NAME_STOP:
+    if len(tokens) == 1:
         return None
-    return " ".join(token.capitalize() for token in tokens[:3])
+    candidate = " ".join(token.capitalize() for token in tokens[:3])
+    if not _plausible_name(candidate):
+        return None
+    return candidate
 
 
 def guess_bare_name(text: str) -> str | None:
     introduced = extract_introduced_name(text)
     if introduced:
         return introduced
+    trailing = re.findall(r"\b([A-Z][a-z']+)\s+([A-Z][a-z']+)\b", text)
+    if trailing:
+        first, last = trailing[-1]
+        candidate = f"{first} {last}"
+        if _plausible_name(candidate):
+            return candidate
     cleaned = re.sub(r"[^A-Za-z\s'-]", " ", text).strip()
     parts = [part for part in cleaned.split() if part]
-    if not 1 <= len(parts) <= 3:
+    if not 2 <= len(parts) <= 3:
         return None
-    if parts[0].lower() in NAME_STOP or parts[0].lower() in {"yes", "no", "yeah", "ok", "okay"}:
+    if any(part.lower() in NAME_STOP for part in parts):
         return None
-    return " ".join(part.capitalize() for part in parts)
+    candidate = " ".join(part.capitalize() for part in parts)
+    if not _plausible_name(candidate):
+        return None
+    return candidate
 
 
 def format_phone(digits: str | None) -> str:
@@ -301,6 +540,15 @@ def format_phone(digits: str | None) -> str:
     if len(raw) != 10:
         return digits
     return f"({raw[:3]}) {raw[3:6]}-{raw[6:]}"
+
+
+def caller_id_digits(value: str | None) -> str | None:
+    if not value:
+        return None
+    digits = _digits(value)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    return digits if len(digits) == 10 else None
 
 
 def selection_index(text: str) -> int | None:

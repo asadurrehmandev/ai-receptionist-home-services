@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
@@ -29,9 +30,14 @@ from app.voice.twilio import (
     use_media_stream,
 )
 
+logger = logging.getLogger("receptionist")
+
+PUBLIC_API = {"/api/health"}
+DEMO_ONLY = {"/api/demo/calls", "/api/admin/reset", "/api/admin/purge"}
+
 
 class TurnIn(BaseModel):
-    text: str
+    text: str = Field(max_length=2000)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -42,6 +48,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if not settings.twilio_auth_token:
+            logger.warning("TWILIO_AUTH_TOKEN is empty. Twilio signature checks are DISABLED.")
+        if settings.retention_days > 0:
+            cutoff = datetime.now(config.zone) - timedelta(days=settings.retention_days)
+            store.purge_before(cutoff)
         if settings.seed_on_start and store.count_calls() == 0:
             seed_demo(service)
         yield
@@ -50,9 +61,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="AI Receptionist for Home Services", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=list(settings.cors_origins),
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
     app.state.settings = settings
     app.state.config = config
@@ -64,12 +75,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "ok": True,
             "business": config.name,
-            "llm": bool(settings.openai_api_key),
+            "llm": settings.llm_ready,
             "stt": bool(settings.deepgram_api_key),
             "tts": bool(settings.elevenlabs_api_key),
             "twilio_signature": bool(settings.twilio_auth_token),
             "media_stream_ready": settings.media_stream_ready,
-            "brain": "rules+llm" if settings.openai_api_key else "rules",
+            "brain": "claude-tools" if settings.llm_ready else "rules",
+            "demo_mode": settings.demo_mode,
+            "model": settings.anthropic_model if settings.llm_ready else None,
         }
 
     @app.get("/api/config")
@@ -140,10 +153,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/demo/calls")
     def start_demo():
+        _require_demo()
         return service.start("simulator")
 
     @app.post("/api/demo/calls/{call_id}/turns")
     def demo_turn(call_id: str, body: TurnIn):
+        _require_demo()
         try:
             return service.turn(call_id, body.text)
         except KeyError as exc:
@@ -151,7 +166,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/admin/reset")
     def reset_demo():
+        _require_demo()
         return service.reset_and_seed(seed_demo)
+
+    @app.post("/api/admin/purge")
+    def purge_old():
+        _require_admin()
+        cutoff = datetime.now(config.zone) - timedelta(days=settings.retention_days)
+        return {"purged_calls": store.purge_before(cutoff)}
 
     @app.post("/api/voice/twilio/incoming")
     async def twilio_incoming(request: Request):
@@ -162,8 +184,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             xml = stream_twiml(stream_ws_url(request, settings))
             return Response(content=xml, media_type="application/xml")
         call_sid = form.get("CallSid") or None
-        started = service.start("twilio", external_id=call_sid)
-        xml = gather_twiml(started["say"], _gather_action(request), config.gather_voice)
+        started = service.start("twilio", external_id=call_sid, caller_id=form.get("From"))
+        xml = gather_twiml(started["say"], _gather_action(request), config.gather_voice, _language(started))
         return Response(content=xml, media_type="application/xml")
 
     @app.post("/api/voice/twilio/gather")
@@ -172,33 +194,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not _authorized(request, form):
             return Response(status_code=403)
         call_sid = form.get("CallSid") or None
+        caller = form.get("From")
         call_id = store.get_call_by_external(call_sid) if call_sid else None
-        speech = (form.get("SpeechResult") or "").strip()
+        speech = (form.get("SpeechResult") or "").strip()[:2000]
         if call_id is None:
-            started = service.start("twilio", external_id=call_sid)
+            started = service.start("twilio", external_id=call_sid, caller_id=caller)
             call_id = started["id"]
-            if not speech:
-                result = started
-            else:
-                result = service.turn(call_id, speech)
-        elif not speech:
-            result = {
-                "say": "I didn't catch that. What's going on at the property?",
-                "outcome": None,
-            }
+            result = started if not speech else service.turn(call_id, speech, caller_id=caller)
         else:
-            result = service.turn(call_id, speech)
+            result = service.turn(call_id, speech, caller_id=caller)
         voice = config.gather_voice
+        language = _language(result)
         if result.get("outcome") == "escalated":
-            xml = dial_twiml(result["say"], config.on_call_phone, voice)
+            xml = dial_twiml(result["say"], config.on_call_phone, voice, _dial_action(request), config.phone_e164)
         elif result.get("outcome"):
             xml = say_and_hangup(result["say"], voice)
         else:
-            xml = gather_twiml(result["say"], _gather_action(request), voice)
+            xml = gather_twiml(result["say"], _gather_action(request), voice, language)
         return Response(content=xml, media_type="application/xml")
+
+    @app.post("/api/voice/twilio/dial-status")
+    async def twilio_dial_status(request: Request):
+        form = await _form(request)
+        if not _authorized(request, form):
+            return Response(status_code=403)
+        status = (form.get("DialCallStatus") or "").lower()
+        voice = config.gather_voice
+        if status in {"no-answer", "busy", "failed", "canceled"}:
+            service.store.add_event(
+                form.get("CallSid"),
+                "sms",
+                {
+                    "to": config.on_call_phone,
+                    "body": f"{config.name}: missed transfer from {form.get('From') or 'unknown'}. Please call them back.",
+                },
+                "logged",
+                datetime.now(config.zone),
+            )
+            say = (
+                f"{config.on_call_name} didn't pick up. We've texted the on-call technician. "
+                "They will call you back at the number you're calling from."
+            )
+            return Response(content=say_and_hangup(say, voice), media_type="application/xml")
+        return Response(content=say_and_hangup("Thanks for holding. Goodbye.", voice), media_type="application/xml")
 
     @app.websocket("/api/voice/stream")
     async def media_stream(websocket: WebSocket):
+        if not _stream_allowed(websocket):
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
         bridge = bridge_from_settings(service, settings)
         try:
@@ -223,6 +267,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.public_base_url:
             return settings.public_base_url.rstrip("/") + "/api/voice/twilio/gather"
         return str(request.base_url).rstrip("/") + "/api/voice/twilio/gather"
+
+    def _dial_action(request: Request) -> str:
+        if settings.public_base_url:
+            return settings.public_base_url.rstrip("/") + "/api/voice/twilio/dial-status"
+        return str(request.base_url).rstrip("/") + "/api/voice/twilio/dial-status"
+
+    def _language(result: dict) -> str:
+        if result.get("language") == "es":
+            return "es-US"
+        return config.gather_language
+
+    def _require_demo() -> None:
+        if not settings.demo_mode:
+            raise HTTPException(status_code=404, detail="Not found")
+
+    def _require_admin() -> None:
+        return
+
+    def _stream_allowed(websocket: WebSocket) -> bool:
+        if settings.demo_mode:
+            return True
+        token = websocket.query_params.get("token") or ""
+        if settings.admin_token and token == settings.admin_token:
+            return True
+        return False
+
+    @app.middleware("http")
+    async def guard_api(request: Request, call_next):
+        path = request.url.path
+        if path.startswith("/api/") and request.method != "OPTIONS":
+            length = request.headers.get("content-length")
+            if length and length.isdigit() and int(length) > 100_000:
+                return JSONResponse(status_code=413, content={"detail": "Request too large"})
+            if path not in PUBLIC_API and not path.startswith("/api/voice/twilio"):
+                if not settings.demo_mode:
+                    header = request.headers.get("authorization") or ""
+                    token = header.removeprefix("Bearer ").strip()
+                    if not settings.admin_token or token != settings.admin_token:
+                        return JSONResponse(status_code=401, content={"detail": "Admin token required"})
+        return await call_next(request)
 
     _mount_spa(app, settings.static_dir)
     return app
