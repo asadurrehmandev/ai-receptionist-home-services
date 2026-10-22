@@ -317,6 +317,8 @@ class Engine:
                     state.name = recovered
                     state.name_confidence = "low"
                     return self._continue_intake(state, raw, started)
+                if state.name_rejects >= 2:
+                    return self._name_handoff(state, started)
                 return self._finish(
                     state,
                     self._line(state, "Sorry, I missed the name. Who am I speaking with?", "Perdón, no escuché el nombre. ¿Con quién hablo?"),
@@ -905,6 +907,21 @@ class Engine:
     def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
         """The answer to the unclear-path safety question. It does not ask again."""
         return self._safety_answer(state, raw, started, on_clear="callback")
+
+    def _name_handoff(self, state: SessionState, started: float) -> TurnResult:
+        state.outcome = "callback"
+        state.phase = "closed"
+        state.intent = state.intent or "handoff"
+        say = self._line(
+            state,
+            "I'm having trouble with the name. I'll have someone from the office call you back.",
+            "No pude anotar el nombre. Alguien de la oficina le devolverá la llamada.",
+        )
+        events = [
+            {"type": "lead", "payload": _lead_payload(state, "callback")},
+            {"type": "webhook", "payload": self._webhook(state, "lead.callback", None)},
+        ]
+        return self._finish(state, say, started, events)
 
     def _office_callback(self, state: SessionState, started: float) -> TurnResult:
         state.outcome = "callback"

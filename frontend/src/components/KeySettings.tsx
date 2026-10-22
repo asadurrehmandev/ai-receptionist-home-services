@@ -39,7 +39,7 @@ export function KeySettings({ label = "API key" }: { label?: string }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button type="button" size="sm" variant="outline">
+        <Button type="button" size="sm" variant="outline" className="shrink-0" aria-label={label}>
           <span className="sm:hidden">Key</span>
           <span className="hidden sm:inline">{label}</span>
         </Button>

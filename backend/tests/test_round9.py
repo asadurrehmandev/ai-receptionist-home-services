@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo
 
 from app.agent.calendar import MemoryCalendar
 from app.agent.engine import Engine, SessionState
+from app.agent.hazard_nli import nli_ready
+from app.agent.hazard_semantic import semantic_ready
 from app.agent.understand import TurnUnderstanding, classifier_mode, combine_safety, understand_ready
 from app.config_loader import load_business
 from app.service import FixedClock
@@ -58,7 +60,8 @@ def test_a_yes_still_pages_when_a_model_says_they_are_safe():
 def test_a_heat_pump_check_continues_and_field_instructions_do_not_page(tmp_path, monkeypatch):
     monkeypatch.setenv("INSTRUCT_MODEL_PATH", str(tmp_path / "broken.gguf"))
     (tmp_path / "broken.gguf").write_bytes(b"not-a-model")
-    assert classifier_mode() == "keyword+nli"
+    expected = "keyword+nli" if semantic_ready() and nli_ready() else "keyword"
+    assert classifier_mode() == expected
     assert understand_ready() is False
     engine = _engine()
     state = SessionState()

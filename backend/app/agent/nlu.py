@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 
 from app.agent.hazard import classify_emergency as classify_hazard
+from app.agent.hazard import prepare, service_catalogue
 
 SPAM_PATTERNS: tuple[str, ...] = (
     r"\bseo\b",
@@ -98,6 +99,12 @@ ISSUE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("leak",), "Leak"),
     (("spigot", "hose bib", "hose bibb", "sillcock", "outdoor faucet"), "Outdoor faucet"),
     (("water pressure", "low pressure", "shower pressure"), "Water pressure"),
+    (("steam shower", "ducha de vapor"), "Steam shower"),
+    (("bath fan", "bathroom fan", "exhaust fan", "ventilador"), "Bath fan"),
+    (("recessed", "can light", "luces empotradas", "empotrad"), "Recessed lights"),
+    (("smoke alarm", "smoke detector", "alarma de humo", "detector de humo"), "Smoke alarm"),
+    (("carbon monoxide", "co detector", "monoxido"), "CO detector"),
+    (("boiler", "caldera"), "Boiler"),
 )
 
 NAME_STOP = {
@@ -292,7 +299,10 @@ _ES_EXISTING = re.compile(
 _ES_JOB = re.compile(
     r"\b(repar\w*|arregl\w*|calentador|fuga|gote\w*|desague|drenaje|tuberia|"
     r"mantenimiento|sin agua caliente|no calienta|no enfria|inodoro|llave|grifo|"
-    r"aire acondicionado|climatizacion|calefaccion|fuga de agua)\b",
+    r"aire acondicionado|climatizacion|calefaccion|fuga de agua|"
+    r"instalar|instalacion|reemplaz\w*|recambio|caldera|revision|revisar|valvula|"
+    r"ventilador|empotrad\w*|alarma de humo|detector de humo|detector de monoxido|"
+    r"ducha de vapor|chequeo)\b",
     re.I,
 )
 
@@ -347,15 +357,23 @@ def detect_intent(text: str) -> str:
     spanish = _spanish_intent(text)
     if spanish:
         return spanish
-    if SERVICE_PROBLEM.search(norm) or re.search(
+    if service_catalogue(text):
+        return "new_job"
+    screened = prepare(text)
+    if SERVICE_PROBLEM.search(norm) or SERVICE_PROBLEM.search(screened) or re.search(
         r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it|"
         r"install\w*|hook\s?up|hookup|thermostat|no power|dead outlet|outlet (?:is )?dead|puddle|dripp\w*|"
         r"chilly|cold room|breaker tripped|tripped (?:the )?breaker|blank screen|tune[- ]?up|"
         r"spigots?|hose bibs?|bibbs?|sillcocks?|water pressure|low pressure|shower pressure|"
         r"sump|exhaust fan|gfci|gfi|flood sensors?|softener|check-?up|checkup|replac\w*|"
         r"heat[- ]?pump|annual service|yearly service|yearly check|annual check|maintenance visit|"
-        r"landlord|rental unit|inspection)\b",
+        r"landlord|rental unit|inspection|steam shower|shower valve|bath fan|bathroom fan|"
+        r"recessed|can lights|smoke alarm|smoke detector|boiler|carbon monoxide detector)\b",
         norm,
+    ) or re.search(
+        r"\b(steam shower|shower valve|bath fan|bathroom fan|recessed|can lights|"
+        r"smoke alarm|smoke detector|boiler|carbon monoxide detector|co detector)\b",
+        screened,
     ):
         return "new_job"
     return "unclear"
@@ -809,7 +827,7 @@ def extract_city(text: str, cities: tuple[str, ...]) -> str | None:
 
 
 def extract_issue(text: str) -> str | None:
-    padded = f" {normalize(text).replace('heeder', 'heater').replace('heder', 'heater')} "
+    padded = f" {_fold_latin(normalize(text)).replace('heeder', 'heater').replace('heder', 'heater')} "
     for keywords, label in ISSUE_RULES:
         for keyword in keywords:
             if keyword in padded:
@@ -963,6 +981,7 @@ def extract_introduced_name(text: str) -> str | None:
 
 
 _MARKUP_TAG = re.compile(r"<[^>]*>", re.I)
+_TEMPLATE_NAME = re.compile(r"\{\{|\}\}|\$\{|\$\(|#\{|<%|%>|\bjndi\b|ldap://", re.I)
 _MARKUP_TOKEN = {
     "script",
     "alert",
@@ -978,7 +997,9 @@ _MARKUP_TOKEN = {
 
 
 def _without_markup(text: str) -> str:
-    return _MARKUP_TAG.sub(" ", text or "")
+    cleaned = _MARKUP_TAG.sub(" ", text or "")
+    cleaned = re.sub(r"\$\{[^}]*\}|\{\{[^}]*\}\}", " ", cleaned)
+    return _TEMPLATE_NAME.sub(" ", cleaned)
 
 
 def _markup_tokens(text: str) -> bool:
@@ -988,7 +1009,9 @@ def _markup_tokens(text: str) -> bool:
 
 
 def _not_a_person_name(text: str) -> bool:
-    """A phone, ZIP, street, or markup fragment is not a caller's name."""
+    """A phone, ZIP, street, markup fragment, or template string is not a caller's name."""
+    if _TEMPLATE_NAME.search(text or ""):
+        return True
     raw = _without_markup(text or "")
     if not raw.strip():
         return True

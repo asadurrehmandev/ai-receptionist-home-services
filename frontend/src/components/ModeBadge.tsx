@@ -36,7 +36,7 @@ export function ModeBadge() {
             }
           >
             <FlaskConical className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="whitespace-normal">{short}</span>
+            <span className="whitespace-normal break-words">{short}</span>
             <span className="sr-only">{label}</span>
             {session.note ? <span className="sr-only">{session.note}</span> : null}
           </p>

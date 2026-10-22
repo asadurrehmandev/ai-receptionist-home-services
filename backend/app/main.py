@@ -153,12 +153,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload["runtime"] = health()
         return payload
 
+    def _expire_open_calls() -> None:
+        store.expire_stale_calls(service.clock.now())
+
     @app.get("/api/metrics")
     def metrics():
+        _expire_open_calls()
         return store.metrics()
 
     @app.get("/api/overview")
     def overview():
+        _expire_open_calls()
         calls = store.list_calls()
         metrics_payload = store.metrics()
         now = datetime.now(config.zone)
@@ -184,10 +189,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/calls")
     def list_calls():
+        _expire_open_calls()
         return {"calls": store.list_calls()}
 
     @app.get("/api/calls/{call_id}")
     def get_call(call_id: str):
+        _expire_open_calls()
         call = store.get_call(call_id)
         if call is None:
             raise HTTPException(status_code=404, detail="Call not found")

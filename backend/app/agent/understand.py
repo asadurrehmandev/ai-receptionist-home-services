@@ -153,9 +153,13 @@ def model_path() -> str:
 
 
 def understander_name() -> str:
+    """The optional prose model. `off` means no key is configured.
+
+    This is not the hazard classifier. That field is `classifier`.
+    """
     if os.environ.get("ANTHROPIC_API_KEY"):
         return os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
-    return "keyword"
+    return "off"
 
 
 def classifier_mode() -> str:

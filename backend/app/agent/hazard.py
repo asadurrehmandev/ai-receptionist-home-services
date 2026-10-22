@@ -72,6 +72,16 @@ _SYMPTOM = re.compile(
     r"\bdolor de cabeza\b",
     re.I,
 )
+_EXPOSURE = re.compile(
+    r"\b(headaches?|dizzy|dizziness|woozy|wooziness|nauseous|nauseated|nausea|vomit\w*|"
+    r"throwing up|feels? sick|feeling sick|passed out|confused|sleepy|drowsy|sick|"
+    r"maread\w*|mareo|aturdid\w*|desmay\w*|confundid\w*|vomito|enferm\w*|"
+    r"adormilad\w*|somnolient\w*)\b|"
+    r"\bdolor de cabeza\b|"
+    r"\beyes\b.{0,20}\b(water\w*|burn\w*|sting\w*|llor\w*|aguad\w*|ard\w*)\b|"
+    r"\b(watery|watering|llorosos)\s+eyes\b",
+    re.I,
+)
 _HEAT_SOURCE = re.compile(r"\b(furnace|heater|boiler|gas|carbon|monoxido)\b", re.I)
 _WATER_FORCE = re.compile(
     r"\b(pouring|gushing|shooting|spraying|spewing|spurting|jetting|blasting|erupting|"
@@ -170,6 +180,373 @@ def fold(text: str) -> str:
     stripped = "".join(pieces).lower()
     stripped = re.sub(r"\s+", " ", stripped).strip()
     return stripped
+
+
+# Tokens that are not words. Real words such as hose, small, and mouse stay put.
+_TYPO_TOKEN = {
+    "smel": "smell",
+    "smeel": "smell",
+    "smelg": "smell",
+    "hous": "house",
+    "watr": "water",
+    "wter": "water",
+    "leakin": "leaking",
+    "leakn": "leaking",
+    "thru": "through",
+    "outlit": "outlet",
+    "outlett": "outlet",
+    "pannel": "panel",
+    "panal": "panel",
+    "dizzey": "dizzy",
+    "dizzie": "dizzy",
+    "dizy": "dizzy",
+    "sleeppy": "sleepy",
+    "boillin": "boiling",
+    "boilling": "boiling",
+    "boilin": "boiling",
+    "burnin": "burning",
+    "flickrin": "flickering",
+    "flickerin": "flickering",
+    "electricty": "electricity",
+    "electrcity": "electricity",
+    "fixtur": "fixture",
+    "alaram": "alarm",
+    "alrm": "alarm",
+    "steem": "steam",
+    "vapur": "vapor",
+    "oder": "odor",
+    "gass": "gas",
+    "heatar": "heater",
+    "monoxid": "monoxide",
+    "carbom": "carbon",
+    "detctor": "detector",
+    "detecter": "detector",
+    "boiller": "boiler",
+    "reccessed": "recessed",
+    "recesed": "recessed",
+    "instal": "install",
+    "instll": "install",
+    "replacment": "replacement",
+    "watring": "watering",
+    "scaldin": "scalding",
+    "smelll": "smell",
+    "housr": "house",
+}
+_GLOSS = (
+    (re.compile(r"\b(alarma|detector)\s+de\s+humo\b"), r"\1 de humo smoke alarm"),
+    (re.compile(r"\bducha\s+de\s+vapor\b"), "ducha de vapor steam shower"),
+    (re.compile(r"\b(vapor|vaho)\b"), r"\1 steam"),
+    (re.compile(r"\b(herv\w*|hirv\w*|hierv\w*|ebull\w*)\b"), r"\1 boiling"),
+    (re.compile(r"\b(quemad\w*|quemando)\b"), r"\1 burning"),
+    (re.compile(r"\bcasi\b"), "casi almost"),
+    (re.compile(r"\b(quema|quemo|quemarse)\b"), r"\1 burned"),
+    (re.compile(r"\b(hijo|hija|nino|nina|bebe|criatura)\b"), r"\1 child"),
+    (re.compile(r"\b(lampara|foco)\b"), r"\1 light fixture"),
+    (re.compile(r"\bluz\b"), "luz light"),
+    (re.compile(r"\b(parpade\w*|titila\w*)\b"), r"\1 flicker"),
+    (re.compile(r"\bgote\w*\b"), lambda match: f"{match.group(0)} dripping water"),
+    (re.compile(r"\b(tablero)\b"), r"\1 panel"),
+    (re.compile(r"\b(enchufe|tomacorriente)\b"), r"\1 outlet"),
+    (re.compile(r"\b(zumb\w*)\b"), r"\1 buzz"),
+    (re.compile(r"\b(olor|huele|huelen)\b"), r"\1 smell"),
+    (re.compile(r"\bojos\b(.{0,24})\b(llor\w*|aguad\w*|ard\w*)\b"), r"ojos\1\2 eyes watering"),
+    (re.compile(r"\b(mareo|maread\w*|enferm\w*|adormilad\w*|somnolient\w*)\b"), r"\1 dizzy sleepy sick"),
+    (re.compile(r"\bmonoxido\b"), "monoxido carbon monoxide"),
+    (re.compile(r"\balarma\b"), "alarma alarm"),
+    (re.compile(r"\bcaldera\b"), "caldera boiler"),
+    (re.compile(r"\bvalvula\b"), "valvula valve"),
+    (re.compile(r"\bventilador\b"), "ventilador fan"),
+    (re.compile(r"\bempotrad\w*\b"), lambda match: f"{match.group(0)} recessed"),
+    (re.compile(r"\b(instalar|instalacion|reemplaz\w*|recambio)\b"), r"\1 install replace"),
+    (re.compile(r"\b(revision|revisar|mantenimiento|chequeo)\b"), r"\1 check maintenance"),
+)
+_COMMERCIAL = re.compile(
+    r"\b(insurance|insurer|claim|adjuster|premium|"
+    r"inspecc\w*|inspection|cotiz\w*|presupuesto)\b",
+    re.I,
+)
+_PRESENT_DANGER = re.compile(
+    r"\b(won't stop|wont stop|will not stop|can't shut|cant shut|cannot shut|"
+    r"gushing|spewing|jetting|blasting|erupting|cascading|geyser|scalding|"
+    r"spraying|shooting|pouring|feet of water|someone is hurt|anyone hurt|"
+    r"getting hurt|almost burned|nearly burned|onto the floor|all over the floor)\b",
+    re.I,
+)
+_CLEARED = re.compile(
+    r"\b(no leak|not leaking|isn't leaking|isnt leaking|nothing is leaking|no water|"
+    r"no smell|do not smell|don't smell|dont smell|no odor|nothing smells|no gas smell|"
+    r"not a leak|it can wait|puede esperar|no hay olor|no hay fuga|sin olor|sin fuga)\b",
+    re.I,
+)
+_CATALOGUE = re.compile(
+    r"\b(steam\s+shower|shower\s+valve|ducha\s+de\s+vapor)\b|"
+    r"\b(bath(?:room)?\s+fan|exhaust\s+fan|vent\s+fan|ventilador)\b|"
+    r"\b(fan|ventilador)\b.{0,32}\b(bath|bathroom|bano|banera)\b|"
+    r"\b(bath|bathroom|bano|banera)\b.{0,32}\b(fan|ventilador)\b|"
+    r"\b(recessed(?:\s+lights?)?|can\s+lights?|luces?\s+empotrad\w*|empotrad\w*)\b|"
+    r"\b(smoke\s+alarms?|smoke\s+detectors?|alarma\s+de\s+humo|detector\s+de\s+humo)\b|"
+    r"\b(instal\w*|reemplaz\w*|replac\w*|cambiar|poner|comprar|buy|quote)\b.{0,56}"
+    r"\b((?:carbon monoxide|monoxido|co)\b.{0,16}\b(?:detector|alarm)s?|(?:detector|alarma)\b.{0,20}\b(?:monoxido|humo|co))\b|"
+    r"\b((?:carbon monoxide|monoxido|co)\b.{0,16}\b(?:detector|alarm)s?|(?:detector|alarma)\b.{0,20}\b(?:monoxido|humo))\b.{0,40}"
+    r"\b(instal\w*|reemplaz\w*|replac\w*|cambiar|comprar|buy|quote|install)\b|"
+    r"\b(boiler|caldera)\b.{0,48}\b(check|service|maintenance|tune|inspect\w*|revision|revisar|mantenimiento|chequeo)\b|"
+    r"\b(check|service|maintenance|tune|inspect\w*|revision|revisar|mantenimiento|chequeo)\b.{0,48}\b(boiler|caldera)\b",
+    re.I,
+)
+_APPLIANCE_BASIN = re.compile(
+    r"\b(dishwasher|washing machine|clothes washer|\bwashers?\b|fridge|refrigerator|ice ?maker)\b",
+    re.I,
+)
+_LEAVING_APPLIANCE = re.compile(
+    r"\b(overflow\w*|onto the floor|on the floor|out of the|across the floor|all over|"
+    r"won't stop|wont stop|will not stop|spraying|ceiling)\b",
+    re.I,
+)
+_WATER_MOTION = re.compile(r"\b(water|agua|drip\w*|leak\w*|wet|gote\w*)\b", re.I)
+_ELEC_SURFACE = re.compile(
+    r"\b(fixture|outlet|socket|receptacle|wiring|electric\w*|light|lamp|luminaire)\b",
+    re.I,
+)
+_FROM_WORD = re.compile(r"\b(from|out of|off of|through|de la|del|desde)\b", re.I)
+_STEAM_BOIL = re.compile(r"\b(steam|vapor|vapour|boiling|boil|hirviendo|scald\w*)\b", re.I)
+_HURT = re.compile(
+    r"\b(almost|nearly|casi|burned|burnt|hurt|scald\w*|quem\w*)\b",
+    re.I,
+)
+_PERSON = re.compile(
+    r"\b(child|kid|kids|baby|son|daughter|hijo|hija|he|she|him|her|me|us|person|someone|anybody|anyone|nino|nina)\b",
+    re.I,
+)
+_BURN_SMELL = re.compile(
+    r"\b(burning smell|smell of burning|smells? burnt|burnt smell|burning plastic|"
+    r"smells? like (?:burning|burnt|plastic)|hot plastic|melted plastic|olor a quemado)\b|"
+    r"\bburning\b.{0,20}\b(smell|plastic|rubber)\b|"
+    r"\b(smell\w*|olor)\b.{0,20}\b(burning|burnt|burned|quemad\w*)\b",
+    re.I,
+)
+_PANEL_DEVICE = re.compile(r"\b(panel|outlet|socket|receptacle|breaker|tablero|enchufe)\b", re.I)
+_DUSTY_SEASON = re.compile(
+    r"\b(dusty|burning[- ]dust|warm dust|first (?:cold|heating)|each october|"
+    r"every (?:year|winter|fall|october)|when the (?:furnace|heat) (?:starts|kicks))\b",
+    re.I,
+)
+_POPPING = re.compile(
+    r"\b(popp\w*|rumbl\w*|kettl\w*)\b.{0,48}\b(water heater|heater|boiler|tank|calentador|caldera)\b|"
+    r"\b(water heater|heater|boiler|tank|calentador|caldera)\b.{0,48}\b(popp\w*|rumbl\w*|kettl\w*)\b",
+    re.I,
+)
+_PILOT_OUT = re.compile(
+    r"\bpilot\b.{0,40}\b(keeps going out|goes out|keeps dying|won't stay|wont stay|will not stay|no se queda)\b|"
+    r"\b(keeps going out|goes out|keeps dying)\b.{0,24}\bpilot\b",
+    re.I,
+)
+_BASE_WATER = re.compile(
+    r"\bwater\b.{0,48}\b(?:base|foot)\b.{0,28}\b(?:toilet|heater|tank|inodoro)\b|"
+    r"\b(?:base|foot)\b.{0,28}\b(?:toilet|heater|tank|inodoro)\b.{0,36}\bwater\b|"
+    r"\bagua\b.{0,48}\b(?:base|pie)\b.{0,28}\b(?:inodoro|calentador|tanque)\b",
+    re.I,
+)
+_ODD_SMELL = re.compile(
+    r"\b(sometimes|occasional\w*|odd)\b.{0,40}\b(smell\w*|odor\w*|olor)\b|"
+    r"\b(smell\w*|odor\w*|olor)\b.{0,32}\b(sometimes|occasional\w*|odd)\b",
+    re.I,
+)
+
+
+def _fix_texting(text: str) -> str:
+    """Repair tokens that are not words, and the texting word r."""
+    parts = text.split()
+    fixed: list[str] = []
+    for token in parts:
+        match = re.match(r"^([^a-z0-9]*)([a-z0-9]+)([^a-z0-9]*)$", token)
+        if not match:
+            fixed.append(token)
+            continue
+        prefix, word, suffix = match.group(1), match.group(2), match.group(3)
+        if word == "r" and len(parts) >= 3:
+            word = "are"
+        elif word in _TYPO_TOKEN:
+            word = _TYPO_TOKEN[word]
+        fixed.append(prefix + word + suffix)
+    return " ".join(fixed)
+
+
+def _gloss(text: str) -> str:
+    """Keep the original tokens and add an English gloss beside them."""
+    glossed = text
+    for pattern, replacement in _GLOSS:
+        glossed = pattern.sub(replacement, glossed)
+    return glossed
+
+
+def prepare(text: str) -> str:
+    """Fold, fix texting, and gloss Spanish hazard words before the screen."""
+    return _gloss(_fix_texting(fold(text)))
+
+
+def _commercial_without_danger(text: str) -> bool:
+    return bool(_COMMERCIAL.search(text)) and not _PRESENT_DANGER.search(text)
+
+
+def _contained_appliance_water(text: str) -> bool:
+    """Water sitting in an appliance basin. Water leaving the appliance is not this."""
+    if not _APPLIANCE_BASIN.search(text):
+        return False
+    if _LEAVING_APPLIANCE.search(text) or _PRESENT_DANGER.search(text) or _sewage_active(text):
+        return False
+    if not re.search(r"\b(water|standing|sitting|pooled|puddl\w*|wet|agua)\b", text):
+        return False
+    return bool(
+        re.search(r"\b(bottom|tub|basin|sump|reservoir|inside|in the)\b", text)
+        or re.search(r"\b(standing|sitting|pooled)\b", text)
+    )
+
+
+def _near(text: str, left: re.Pattern[str], right: re.Pattern[str], window: int) -> bool:
+    for match in left.finditer(text):
+        if _negated_at(text, match.start()):
+            continue
+        start = max(0, match.start() - window)
+        end = min(len(text), match.end() + window)
+        other = right.search(text[start:end])
+        if other and not _negated_at(text, start + other.start()):
+            return True
+    return False
+
+
+def _compose_water_electric(text: str) -> bool:
+    if _contained_appliance_water(text):
+        return False
+    if not _WATER_MOTION.search(text):
+        return False
+    if not _ELEC_SURFACE.search(text) and not re.search(r"\bflicker\w*\b", text):
+        return False
+    flickered = bool(re.search(r"\b(flicker\w*|spark\w*|shock\w*|arcing|shorting)\b", text))
+    if flickered and _near(text, _WATER_MOTION, _ELEC_SURFACE, 64):
+        return True
+    for device in _ELEC_SURFACE.finditer(text):
+        if _negated_at(text, device.start()):
+            continue
+        window = text[max(0, device.start() - 32) : device.end() + 32]
+        if _WATER_MOTION.search(window) and _FROM_WORD.search(window):
+            return True
+    return False
+
+
+def _steam_product(text: str) -> bool:
+    if not re.search(r"\b(steam\s+shower|ducha\s+de\s+vapor|shower\s+valve)\b", text):
+        return False
+    if not re.search(r"\b(valve|valvula|install\w*|replac\w*|quote|cartridge|handle|service)\b", text):
+        return False
+    return _STEAM_ESCAPE.search(text) is None and not (_HURT.search(text) and _PERSON.search(text))
+
+
+def _compose_steam_hurt(text: str) -> bool:
+    if _steam_product(text) or _STEAM_ROUTINE.search(text):
+        return False
+    if _COOKING.search(text) and not re.search(r"\b(heater|boiler|pipe|tank|furnace|water heater)\b", text):
+        return False
+    if not _STEAM_BOIL.search(text) or not _HURT.search(text):
+        return False
+    if _PERSON.search(text):
+        return True
+    return bool(re.search(r"\b(almost|nearly|casi)\b.{0,24}\b(burn\w*|hurt|scald\w*|quem\w*)\b", text))
+
+
+def _compose_burn_panel(text: str) -> bool:
+    if _DUSTY_SEASON.search(text) and not _PANEL_DEVICE.search(text):
+        return False
+    if _COOKING.search(text) and not _PANEL_DEVICE.search(text):
+        return False
+    if not _BURN_SMELL.search(text) or not _PANEL_DEVICE.search(text):
+        return False
+    return _near(text, _BURN_SMELL, _PANEL_DEVICE, 80)
+
+
+def _compose_gas_symptom(text: str) -> bool:
+    if _GAS_BILL.search(text) and not _GAS_SIGNAL.search(text):
+        return False
+    if not _GAS_WORD.search(text):
+        return False
+    smell = _GAS_SIGNAL.search(text) or re.search(r"\b(smell\w*|odor\w*|stink\w*|rotten eggs?)\b", text)
+    if not smell or _negated_at(text, smell.start()):
+        return False
+    symptom = _EXPOSURE.search(text)
+    return bool(symptom and not _negated_at(text, symptom.start()))
+
+
+def _compose_co_symptom(text: str) -> bool:
+    named = bool(_CO_NAME.search(text))
+    if not named:
+        return False
+    symptom = _EXPOSURE.search(text)
+    if not symptom or _negated_at(text, symptom.start()):
+        return False
+    purchase = re.search(r"\b(install\w*|quote|buy|purchase|price|cost)\b", text)
+    event = re.search(
+        r"\b(going off|sounding|beeping|beeps|won't stop|wont stop|says|reading|ppm|screaming|sonando|suena|alarm)\b",
+        text,
+    )
+    if purchase and not event:
+        return False
+    return True
+
+
+def _compose_definite(text: str) -> tuple[str, str] | None:
+    if _commercial_without_danger(text) and not (
+        _compose_gas_symptom(text) or _compose_co_symptom(text) or _compose_burn_panel(text) or _compose_steam_hurt(text)
+    ):
+        if not _compose_water_electric(text):
+            return None
+    if _compose_water_electric(text):
+        return "definite", "Electrical hazard"
+    if _compose_steam_hurt(text):
+        return "definite", "Active water"
+    if _compose_burn_panel(text):
+        return "definite", "Electrical hazard"
+    if _compose_gas_symptom(text):
+        return "definite", "Gas"
+    if _compose_co_symptom(text):
+        return "definite", "Carbon monoxide"
+    return None
+
+
+def _catalogue_job(text: str) -> bool:
+    if not _CATALOGUE.search(text):
+        return False
+    if _compose_definite(text):
+        return False
+    if _EXPOSURE.search(text) and _CO_NAME.search(text):
+        return False
+    if re.search(r"\b(sparks?|sparking|chispas?|smoking|scorch\w*)\b", text):
+        return False
+    if re.search(r"\bsmoke\b", text) and not re.search(r"\bsmoke\s+(?:alarm|detector)s?\b", text):
+        return False
+    if _steam_or_scald(text) or _compose_steam_hurt(text):
+        return False
+    return True
+
+
+def service_catalogue(text: str) -> bool:
+    """An ordinary install, check, or noisy fan. Live hazards are not this."""
+    return _catalogue_job(prepare(text))
+
+
+def _domain_ask(text: str) -> bool:
+    """A hazard-domain line that is not a clear routine job and not a clear all-clear."""
+    if _PAST_FRAME.search(text) or _HYPOTHETICAL_FRAME.search(text) or _IF_EVER.search(text):
+        return False
+    if _catalogue_job(text) or _contained_appliance_water(text) or _DUSTY_SEASON.search(text):
+        return False
+    if _CLEARED.search(text) and not _PRESENT_DANGER.search(text):
+        return False
+    if _commercial_without_danger(text):
+        return False
+    if _POPPING.search(text) or _BASE_WATER.search(text) or _ODD_SMELL.search(text):
+        return True
+    if _PILOT_OUT.search(text) and not (_GAS_SIGNAL.search(text) or re.search(r"\b(rotten eggs?|sulfur|sulphur)\b", text)):
+        return True
+    return False
 
 
 def _clauses(text: str) -> list[str]:
@@ -340,8 +717,11 @@ def mentions_hazard_noun(text: str) -> bool:
 
     A burst, smell, or alarm that lives only in a past or hypothetical clause
     does not open the safety question. The booking request beside it can proceed.
+    A catalogue job such as a smoke-alarm replacement does not open it either.
     """
-    folded = fold(text)
+    folded = prepare(text)
+    if _catalogue_job(folded):
+        return False
     clauses = _split_turn(folded) or [folded]
     live = [clause for clause in clauses if not _clause_away(clause)]
     if not live:
@@ -358,7 +738,9 @@ def _plain_job(text: str) -> bool:
 
 
 def plain_job_text(text: str) -> bool:
-    folded = fold(text)
+    folded = prepare(text)
+    if _catalogue_job(folded):
+        return _compose_definite(folded) is None
     if not _plain_job(folded):
         return False
     if _present_patterns(folded) is not None:
@@ -615,6 +997,16 @@ def _carbon(clause: str) -> str | None:
         return "advice"
     if named and (hard or chirp):
         return "definite"
+    exposure = _EXPOSURE.search(clause)
+    if named and exposure and not _negated_at(clause, exposure.start()):
+        purchase = re.search(r"\b(install\w*|quote|buy|purchase|price|cost)\b", clause)
+        event = re.search(
+            r"\b(going off|sounding|beeping|beeps|won't stop|wont stop|says|reading|ppm|"
+            r"screaming|sonando|suena|alarm|detector)\b",
+            clause,
+        )
+        if not (purchase and not event):
+            return "definite"
     if named and re.search(r"\b(install|quote|buy|purchase)\b", clause):
         return None
     return None
@@ -632,9 +1024,14 @@ def _sewage_active(clause: str) -> bool:
     return bool(re.search(r"\b(drain|toilet|shower|tub|regadera|floor|basement|laundry)\b", clause))
 
 
-def _water(clause: str) -> bool:
+def _water(clause: str, full: str | None = None) -> bool:
     if _sewage_active(clause):
         return True
+    blob = full or clause
+    if _contained_appliance_water(blob) or _contained_appliance_water(clause):
+        return False
+    if _commercial_without_danger(blob) and not _PRESENT_DANGER.search(blob):
+        return bool(_steam_or_scald(clause))
     foreign = _WATER_I18N.search(clause)
     if foreign and not _negated_at(clause, foreign.start()):
         return True
@@ -732,7 +1129,7 @@ def _dead_or_quote_electrical(text: str) -> bool:
 
 def _steam_or_scald(clause: str) -> bool:
     """Steam or scalding water leaving a pipe or appliance. A steam mop is not this."""
-    if _STEAM_ROUTINE.search(clause):
+    if _STEAM_ROUTINE.search(clause) or _steam_product(clause):
         return False
     found = _STEAM_ESCAPE.search(clause)
     if found and not _negated_at(clause, found.start()):
@@ -904,6 +1301,10 @@ _HEDGE = re.compile(
 def _building_water(text: str) -> tuple[str, str] | None:
     """Water leaving a ceiling, a wall, or an appliance. A drip into a freezer is not this."""
     if re.search(r"\b(into the freezer|ice bin|ice tray)\b", text):
+        return None
+    if _contained_appliance_water(text):
+        return None
+    if _commercial_without_danger(text) and not _PRESENT_DANGER.search(text):
         return None
     indoor = bool(_PLACE.search(text))
     if re.search(r"\b(raining|rainstorm|sprinkler)\b", text) and indoor:
@@ -1394,6 +1795,15 @@ def _gas_happening(text: str) -> bool:
     return True
 
 
+def _live_force(text: str) -> bool:
+    """Burst or flood inside a price or insurance question is not a live force."""
+    if not _WATER_FORCE.search(text):
+        return False
+    if _commercial_without_danger(text) and not _PRESENT_DANGER.search(text):
+        return False
+    return True
+
+
 def _framed_away(text: str) -> tuple[str, str | None] | None:
     """Past, habitual, hypothetical, or price talk is not a page.
 
@@ -1410,7 +1820,7 @@ def _framed_away(text: str) -> tuple[str, str | None] | None:
         or _young_cold(text)
         or _fire_or_smoke(text)
         or _gas_happening(text)
-        or bool(_WATER_FORCE.search(text))
+        or (_live_force(text))
         or _sewage_active(text)
         or (_present_hazard_cue(text) and bool(_ELECTRICAL.search(text)))
     )
@@ -1451,7 +1861,7 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
     than pretending there is no hazard.
     """
     original = text
-    full = fold(text)
+    full = prepare(text)
     clauses = _split_turn(full)
     dropped_clause = bool(clauses) and len([clause for clause in clauses if not _clause_away(clause)]) < len(clauses)
     folded = full
@@ -1470,6 +1880,18 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
             return "ask", "Uncertain hazard"
         return "none", None
     folded = active
+    composed = _compose_definite(folded)
+    if composed is not None:
+        return composed
+    if (
+        _catalogue_job(folded)
+        and not _structural_water(folded)
+        and not _fire_or_smoke(folded)
+        and not _gas_anywhere(folded)
+        and not _SYMPTOM.search(folded)
+        and not any(_water(clause, folded) or _gas(clause) or _electrical(clause) for clause in _clauses(folded))
+    ):
+        return "none", None
     patterned = _present_patterns(folded)
     if patterned is not None:
         return patterned
@@ -1499,7 +1921,7 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
             advice = True
         if _electrical(clause):
             return "definite", "Electrical hazard"
-        if _water(clause):
+        if _water(clause, folded):
             return "definite", "Active water"
         if _comfort(clause, folded):
             return "definite", "Unsafe indoor temperature"
@@ -1521,12 +1943,16 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         return situational
     if _backup(folded) >= 3:
         return "definite", "Hazard signals"
+    if _domain_ask(folded):
+        return "ask", "Uncertain hazard"
     if (
         _explicit_clear(folded)
         or _routine_context(folded)
         or _dry_trap(folded)
         or _plain_fixture(folded)
         or _routine_service(folded)
+        or _contained_appliance_water(folded)
+        or (_commercial_without_danger(folded) and not _gas_anywhere(folded) and not _fire_or_smoke(folded))
     ) and not _soft_electrical(folded) and not _damp_mark(folded):
         return "none", None
     if _mild_water(folded) and not _GAS_SIGNAL.search(folded) and not _CO_HARD.search(folded):
@@ -1553,10 +1979,23 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         guessed = ("ask", guessed[1] or "Uncertain hazard")
     if guessed[1] == "Unsafe indoor temperature" and not _comfort_context(folded):
         guessed = ("none", None)
-    if guessed[1] == "Active water" and _mild_water(folded):
+    if guessed[1] == "Active water" and (
+        _mild_water(folded) or _contained_appliance_water(folded) or _commercial_without_danger(folded)
+    ):
         guessed = ("none", None)
     if guessed[1] == "Electrical hazard" and (_cover_color_only(folded) or _dead_or_quote_electrical(folded)):
         guessed = ("none", None)
+    if guessed[0] == "definite" and _catalogue_job(folded):
+        guessed = ("none", None)
+    if (
+        guessed[0] == "definite"
+        and _CLEARED.search(folded)
+        and not _PRESENT_DANGER.search(folded)
+        and _compose_definite(folded) is None
+    ):
+        guessed = ("none", None)
+    if _domain_ask(folded) and guessed[0] == "none":
+        guessed = ("ask", "Uncertain hazard")
     if guessed[1] == "Electrical hazard" and _soft_electrical(folded):
         guessed = ("ask", "Electrical hazard")
     if _damp_mark(folded):

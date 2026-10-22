@@ -431,6 +431,28 @@ class Store:
             ).fetchone()
         return None if row is None else row["id"]
 
+    def expire_stale_calls(self, now: datetime, minutes: int = 20) -> int:
+        """Close open calls that have sat with no outcome. Seeded calls already ended."""
+        cutoff = (now - timedelta(minutes=minutes)).isoformat()
+        stamp = now.isoformat()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id FROM calls WHERE outcome IS NULL AND started_at < ?",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                self.conn.execute(
+                    """
+                    UPDATE calls
+                    SET outcome='missed', phase='closed', ended_at=?
+                    WHERE id=? AND outcome IS NULL
+                    """,
+                    (stamp, row["id"]),
+                )
+            if rows:
+                self.conn.commit()
+        return len(rows)
+
     def list_calls(self) -> list[dict]:
         with self._lock:
             rows = self.conn.execute("SELECT * FROM calls ORDER BY started_at DESC").fetchall()

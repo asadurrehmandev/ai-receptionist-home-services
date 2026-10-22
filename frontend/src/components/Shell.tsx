@@ -71,12 +71,12 @@ export function Shell() {
           </div>
         )}
         <div className="min-w-0">
-          <header className="flex h-[52px] items-center gap-2 overflow-hidden border-b border-border px-3 md:px-4">
+          <header className="flex min-h-[52px] flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-1.5 md:px-4">
             <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setOpen(true)} aria-label="Open menu">
               <Menu className="h-4 w-4" />
             </Button>
             <h1 className="min-w-0 truncate text-md font-semibold tracking-tight">{titleFor(pathname)}</h1>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-1.5 sm:ml-auto sm:w-auto">
               <ModeBadge />
               <div className="flex rounded-md border border-border" role="group" aria-label="Color theme">
                 <ThemeButton current={theme} value="light" label="Light theme" onClick={choose}>
