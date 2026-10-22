@@ -47,6 +47,9 @@ def mint_stream_token(secret: str, ttl: int = 120) -> str:
     return f"{nonce}.{expires}.{signature}"
 
 
+_USED_STREAM_NONCES: set[str] = set()
+
+
 def stream_token_valid(secret: str, token: str) -> bool:
     if not secret or not token:
         return False
@@ -59,6 +62,17 @@ def stream_token_valid(secret: str, token: str) -> bool:
     message = f"{nonce}.{expires}".encode()
     expected = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()[:32]
     return hmac.compare_digest(expected, signature)
+
+
+def consume_stream_token(secret: str, token: str) -> bool:
+    """Accept a token once. A replay of the same nonce is rejected until it would have expired."""
+    if not stream_token_valid(secret, token):
+        return False
+    nonce = token.split(".", 1)[0]
+    if nonce in _USED_STREAM_NONCES:
+        return False
+    _USED_STREAM_NONCES.add(nonce)
+    return True
 
 
 def stream_secret(settings: Settings) -> str:
@@ -74,11 +88,7 @@ def stream_ws_url(request: Request, settings: Settings) -> str:
         base = "wss://" + base[len("https://") :]
     elif base.startswith("http://"):
         base = "ws://" + base[len("http://") :]
-    url = base + "/api/voice/stream"
-    secret = stream_secret(settings)
-    if secret:
-        url += "?token=" + mint_stream_token(secret)
-    return url
+    return base + "/api/voice/stream"
 
 
 def gather_twiml(say: str, action: str, voice: str, language: str = "en-US") -> str:
@@ -118,11 +128,15 @@ def dial_twiml(say: str, number: str, voice: str, action: str, caller_id: str) -
     )
 
 
-def stream_twiml(url: str) -> str:
+def stream_twiml(url: str, token: str | None = None) -> str:
+    """Twilio reads <Parameter> from the start message customParameters, not the URL."""
+    parameter = ""
+    if token:
+        parameter = f'<Parameter name="token" value="{escape(token)}"/>'
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response><Connect>"
-        f'<Stream url="{escape(url)}"/>'
+        f'<Stream url="{escape(url)}">{parameter}</Stream>'
         "</Connect></Response>"
     )
 

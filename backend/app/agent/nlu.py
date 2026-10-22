@@ -48,7 +48,7 @@ EXISTING = re.compile(
 
 QUOTE = re.compile(
     r"\b(how much|how many|price|cost|estimate|quot\w*|ballpark|beat that|beat this|can you beat|"
-    r"cheapest|discount|waive|price match|cash price)\b",
+    r"cheapest|discount|waive|price match|cash price|bucks)\b",
     re.I,
 )
 
@@ -221,7 +221,7 @@ def looks_spanish(text: str) -> bool:
 def is_haggle(text: str) -> bool:
     return bool(
         re.search(
-            r"\b(beat|match that|match their|cheaper|cheapest|for fifty|fifty bucks|discount|"
+            r"\b(beat|match that|match their|cheaper|cheapest|for fifty|bucks|discount|"
             r"can you do it for|waive|cash|fixed income|price match)\b",
             normalize(text),
         )
@@ -378,14 +378,36 @@ def _tidy_street(street: str) -> str:
     return " ".join(titled)
 
 
-UNIT = re.compile(r"\b(?:apartment|apt|unit|suite|#)\s*([A-Za-z0-9-]+)\b", re.I)
+UNIT = re.compile(r"\b(apartment|apt|unit|suite|#)\s*([A-Za-z0-9-]+)\b", re.I)
+_UNIT_LABEL = {"apartment": "Apartment", "apt": "Apt", "unit": "Unit", "suite": "Suite", "#": "#"}
 
 
 def extract_unit(text: str) -> str | None:
     match = UNIT.search(text)
     if not match:
         return None
-    return f"Apt {match.group(1).upper()}"
+    label = _UNIT_LABEL[match.group(1).lower()]
+    return f"{label} {match.group(2).upper()}"
+
+
+def last4_correction(text: str) -> str | None:
+    """A spoken fix for the last four digits, such as '0178 at the end'."""
+    match = re.search(
+        r"\b(\d{4})\b\s+at the end\b|\bat the end\b(?:\s+(?:is|should be))?\s*(\d{4})\b",
+        text or "",
+        re.I,
+    )
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
+
+
+def house_correction(text: str) -> tuple[str, str] | None:
+    """Return (new house number, old house number) for '1907 not 1905'."""
+    match = re.search(r"\b(\d{1,6})\s+not\s+(\d{1,6})\b", text or "", re.I)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
 
 
 def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
@@ -393,7 +415,7 @@ def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
     if is_correction(text):
         source = re.split(r"\b(?:actually|i meant|correction)\b", text, maxsplit=1, flags=re.I)[-1]
     match = STREET.search(source)
-    if match:
+    if match and not re.search(r"\bat the end\b", match.group(1), re.I):
         return _with_unit(_tidy_street(match.group(1)), source)
     city_pattern = "|".join(re.escape(city) for city in cities) if cities else r"$^"
     loose = re.search(
@@ -406,6 +428,8 @@ def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
         return None
     candidate = loose.group(1).strip(" ,.")
     if re.search(r"\b(yes|yeah|earliest|tomorrow|phone|number)\b", candidate, re.I):
+        return None
+    if re.search(r"\bat the end\b", candidate, re.I):
         return None
     return _with_unit(_tidy_street(candidate), source)
 
@@ -452,12 +476,20 @@ def _proper_token(token: str) -> str:
     return token[:1].upper() + token[1:]
 
 
+def _name_chars(token: str) -> str:
+    return "".join(char for char in token if char.isalpha() or char in "-'")
+
+
 def _plausible_name(value: str) -> bool:
     parts = value.split()
     if not 1 <= len(parts) <= 3:
         return False
     for part in parts:
-        if part.lower() in NAME_STOP or not re.fullmatch(r"[A-Za-z][A-Za-z'-]*", part):
+        if part.lower() in NAME_STOP:
+            return False
+        if not part or not any(char.isalpha() for char in part):
+            return False
+        if not all(char.isalpha() or char in "-'" for char in part):
             return False
     if parts[0].lower() in NAME_STOP:
         return False
@@ -466,7 +498,7 @@ def _plausible_name(value: str) -> bool:
 
 def extract_introduced_name(text: str) -> str | None:
     match = re.search(
-        r"\b(?:my name is|this is|i am|i'm|im)\s+([A-Za-z][\w']*(?:\s+[A-Za-z][\w']*){0,3})",
+        r"\b(?:my name is|this is|i am|i'm|im)\s+([^\W\d_](?:[^\W\d_]|['-])*(?:\s+[^\W\d_](?:[^\W\d_]|['-])*){0,3})",
         text,
         re.I,
     )
@@ -479,7 +511,7 @@ def extract_introduced_name(text: str) -> str | None:
         maxsplit=1,
         flags=re.I,
     )[0]
-    tokens = [re.sub(r"[^A-Za-z'-]", "", token) for token in chunk.split()]
+    tokens = [_name_chars(token) for token in chunk.split()]
     tokens = [token for token in tokens if token and token.lower() not in NAME_STOP]
     if not tokens or tokens[0].lower() in NAME_STOP:
         return None
@@ -501,7 +533,7 @@ def guess_bare_name(text: str) -> str | None:
         candidate = f"{first} {last}"
         if _plausible_name(candidate):
             return candidate
-    cleaned = re.sub(r"[^A-Za-z\s'-]", " ", text).strip()
+    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in text).strip()
     parts = [part for part in cleaned.split() if part]
     if not 2 <= len(parts) <= 3:
         return None

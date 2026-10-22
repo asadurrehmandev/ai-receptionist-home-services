@@ -8,6 +8,13 @@ services:
       DEMO_MODE: "0"
       DATABASE_PATH: /app/data/receptionist.db
       STATIC_DIR: /app/frontend/dist
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
     volumes:
       - ./data:/app/data
     healthcheck:

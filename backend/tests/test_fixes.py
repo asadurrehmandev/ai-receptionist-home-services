@@ -193,6 +193,8 @@ def test_twilio_query_string_dedupe_silence_and_dial_fallback(tmp_path):
         )
         assert "call 911" in dialed.text.lower()
         assert "texted" not in dialed.text.lower()
+        assert "call the shop" not in dialed.text.lower()
+        assert "call again" not in dialed.text.lower()
 
 
 def test_adversarial_model_cannot_change_facts(tmp_path):

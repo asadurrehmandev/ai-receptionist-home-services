@@ -19,7 +19,7 @@ from app.main import create_app
 from app.service import FixedClock, ReceptionService
 from app.settings import Settings
 from app.store import Store
-from app.voice.twilio import mint_stream_token, stream_ws_url
+from app.voice.twilio import mint_stream_token, stream_twiml, stream_ws_url
 from starlette.requests import Request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -161,7 +161,7 @@ def test_haggle_states_the_standard_price(tmp_path):
     store.close()
 
 
-def test_media_stream_url_carries_an_hmac_not_the_admin_token(tmp_path):
+def test_media_stream_token_is_a_single_use_parameter(tmp_path):
     settings = Settings(
         config_path=ROOT / "config" / "business.yaml",
         db_path=tmp_path / "desk.db",
@@ -173,16 +173,21 @@ def test_media_stream_url_carries_an_hmac_not_the_admin_token(tmp_path):
     scope = {"type": "http", "headers": [], "scheme": "https", "server": ("demo.example", 443), "path": "/", "query_string": b"", "client": ("1.1.1.1", 1), "method": "POST"}
     request = Request(scope)
     url = stream_ws_url(request, settings)
-    assert "token=" in url
-    assert "desk-token" not in url
-    token = url.split("token=", 1)[1]
+    assert "token=" not in url
+    token = mint_stream_token("desk-token")
+    xml = stream_twiml(url, token)
+    assert "<Parameter" in xml
+    assert 'name="token"' in xml
+    assert "desk-token" not in xml
+    start = {"event": "start", "start": {"streamSid": "MZ", "callSid": "CA", "customParameters": {"token": token}}}
     with TestClient(create_app(settings)) as client:
-        with client.websocket_connect(f"/api/voice/stream?token={token}") as socket:
-            assert socket is not None
-        denied = client.websocket_connect("/api/voice/stream")
-        try:
-            with denied:
-                pass
-            raise AssertionError("stream without a token should close")
-        except Exception:
-            pass
+        with client.websocket_connect("/api/voice/stream") as socket:
+            socket.send_json(start)
+            assert socket.receive_json()["event"] == "mark"
+        with client.websocket_connect("/api/voice/stream?token=" + token) as replay:
+            replay.send_json(start)
+            try:
+                replay.receive_json()
+            except Exception:
+                return
+            raise AssertionError("a replayed stream token should not open")

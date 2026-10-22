@@ -41,6 +41,7 @@ class Preference:
     part: str | None = None
     earliest: time | None = None
     around: time | None = None
+    exclude_weekdays: tuple[int, ...] = ()
 
     @property
     def label(self) -> str:
@@ -62,6 +63,7 @@ class Preference:
             and self.part is None
             and self.earliest is None
             and self.around is None
+            and not self.exclude_weekdays
         )
 
 
@@ -111,6 +113,95 @@ def _upcoming(now: datetime, weekday: int, *, force_next: bool = False) -> datet
     return _midnight(now + timedelta(days=delta))
 
 
+_ORDINALS = {
+    "first": 1,
+    "1st": 1,
+    "second": 2,
+    "2nd": 2,
+    "third": 3,
+    "3rd": 3,
+    "fourth": 4,
+    "4th": 4,
+    "fifth": 5,
+    "5th": 5,
+}
+
+_HOLIDAYS = {
+    "halloween": (10, 31),
+    "christmas eve": (12, 24),
+    "christmas": (12, 25),
+    "new year's day": (1, 1),
+    "new years day": (1, 1),
+    "independence day": (7, 4),
+    "july 4th": (7, 4),
+    "july 4": (7, 4),
+}
+
+_HOUR_TOKEN = r"(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+
+
+def _hour_token(token: str) -> int:
+    if token.isdigit():
+        return int(token)
+    return _WORD_HOUR[token]
+
+
+def _nth_date(year: int, month: int, weekday: int, n: int, tz) -> datetime | None:
+    first = datetime(year, month, 1, tzinfo=tz)
+    delta = (weekday - first.weekday()) % 7
+    day_num = 1 + delta + (n - 1) * 7
+    try:
+        return datetime(year, month, day_num, tzinfo=tz)
+    except ValueError:
+        return None
+
+
+def _nth_in_month(norm: str, now: datetime) -> datetime | None:
+    match = re.search(
+        r"\b(?:the\s+)?(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th)\s+"
+        r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+"
+        r"(?:in|of)\s+"
+        r"(january|february|march|april|may|june|july|august|september|october|november|december)\b",
+        norm,
+    )
+    if not match:
+        return None
+    found = _nth_date(now.year, MONTHS[match.group(3)], WEEKDAY_NAMES[match.group(2)], _ORDINALS[match.group(1)], now.tzinfo)
+    if found is None:
+        return None
+    if found.date() < now.date():
+        found = _nth_date(now.year + 1, MONTHS[match.group(3)], WEEKDAY_NAMES[match.group(2)], _ORDINALS[match.group(1)], now.tzinfo)
+    return _midnight(found) if found is not None else None
+
+
+def _holiday(norm: str, now: datetime) -> datetime | None:
+    for name, (month, day) in sorted(_HOLIDAYS.items(), key=lambda item: len(item[0]), reverse=True):
+        if re.search(rf"\b{name}\b", norm):
+            candidate = datetime(now.year, month, day, tzinfo=now.tzinfo)
+            if candidate.date() < now.date():
+                candidate = candidate.replace(year=now.year + 1)
+            return _midnight(candidate)
+    return None
+
+
+def _spoken_clock(norm: str) -> time | None:
+    half = re.search(rf"\bhalf past\s+{_HOUR_TOKEN}\s*(am|pm)?\b", norm)
+    if half:
+        return _hour_from_match(str(_hour_token(half.group(1))), "30", half.group(2), assume_pm=True)
+    quarter_past = re.search(rf"\bquarter past\s+{_HOUR_TOKEN}\s*(am|pm)?\b", norm)
+    if quarter_past:
+        return _hour_from_match(str(_hour_token(quarter_past.group(1))), "15", quarter_past.group(2), assume_pm=True)
+    quarter_to = re.search(rf"\bquarter to\s+{_HOUR_TOKEN}\s*(am|pm)?\b", norm)
+    if quarter_to:
+        hour = _hour_token(quarter_to.group(1))
+        hour = 12 if hour == 1 else hour - 1
+        return _hour_from_match(str(hour), "45", quarter_to.group(2), assume_pm=True)
+    ish = re.search(rf"\b(?:around\s+|at\s+)?{_HOUR_TOKEN}\s*(?::(\d{{2}}))?\s*(am|pm)?\s*ish\b", norm)
+    if ish:
+        return _hour_from_match(str(_hour_token(ish.group(1))), ish.group(2), ish.group(3), assume_pm=True)
+    return None
+
+
 def parse_preference(text: str, now: datetime) -> Preference | None:
     norm = re.sub(r"\s+", " ", text.strip().lower())
     day = None
@@ -152,11 +243,23 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
         day = _midnight(now + timedelta(days=1))
     elif re.search(r"\btoday\b", norm):
         day = _midnight(now)
+    elif (nth := _nth_in_month(norm, now)) is not None:
+        day = nth
+    elif (holiday := _holiday(norm, now)) is not None:
+        day = holiday
+    elif re.search(r"\bnext week\b", norm):
+        days_until_monday = (7 - now.weekday()) % 7 or 7
+        next_monday = _midnight(now + timedelta(days=days_until_monday))
+        day = next_monday
+        day_until = next_monday + timedelta(days=6)
     else:
         for name, index in WEEKDAY_NAMES.items():
             if re.search(rf"\b{name}\b", norm):
                 day = _upcoming(now, index, force_next=bool(re.search(rf"\bnext {name}\b", norm)))
                 break
+    excluded = tuple(
+        index for name, index in WEEKDAY_NAMES.items() if re.search(rf"\bexcept {name}\b", norm)
+    )
     part = None
     if "after lunch" in norm or "afternoon" in norm:
         part = "afternoon"
@@ -168,10 +271,10 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
     after = re.search(r"\bafter\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", norm)
     if after and "after lunch" not in norm:
         earliest = _hour_from_match(after.group(1), after.group(2), after.group(3), assume_pm=True)
-    around = None
-    if re.search(r"\bnoon\b", norm):
+    around = _spoken_clock(norm)
+    if around is None and re.search(r"\bnoon\b", norm):
         around = time(12, 0)
-    else:
+    elif around is None:
         around_match = re.search(r"\b(?:at|around)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", norm)
         if around_match:
             around = _hour_from_match(around_match.group(1), around_match.group(2), around_match.group(3), assume_pm=True)
@@ -189,7 +292,14 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
                 if part_name == "evening" and hour < 12:
                     hour += 12
                 around = time(hour, 0)
-    preference = Preference(day=day, day_until=day_until, part=part, earliest=earliest, around=around)
+    preference = Preference(
+        day=day,
+        day_until=day_until,
+        part=part,
+        earliest=earliest,
+        around=around,
+        exclude_weekdays=excluded,
+    )
     if preference.is_empty() and day_until is None:
         return None
     return preference
@@ -258,6 +368,8 @@ def available_slots(
                     continue
                 if pref.day is None and pref.day_until is not None:
                     continue
+                if pref.exclude_weekdays and start.weekday() in pref.exclude_weekdays:
+                    continue
                 if not _part_ok(start, pref):
                     continue
             end = start + duration
@@ -272,9 +384,9 @@ def available_slots(
         return collect(None), False
     matched = collect(preference)
     if matched and preference.around is not None:
-        matched = sorted(matched, key=lambda moment: abs(_minutes(moment) - _minutes_of(preference.around)))
+        matched = sorted(matched, key=lambda moment: abs(_minutes(moment) - _minutes_of(preference.around)))[:limit]
     if matched:
-        return matched, False
+        return matched[:limit], False
     return collect(None), True
 
 

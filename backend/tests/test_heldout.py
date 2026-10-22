@@ -37,4 +37,13 @@ def test_tool_mode_is_not_scored_with_follow_rules():
     """follow_rules is a private fallback, not a Claude tool, so it is not a tool-mode score."""
     names = [spec["name"] for spec in TOOL_SPECS]
     assert "follow_rules" not in names
-    assert set(names) == {"find_slots", "hold_slot", "book", "lookup_booking", "cancel", "transfer"}
+    assert set(names) == {
+        "find_slots",
+        "hold_slot",
+        "book",
+        "lookup_booking",
+        "cancel",
+        "transfer",
+        "record_caller",
+        "speak",
+    }

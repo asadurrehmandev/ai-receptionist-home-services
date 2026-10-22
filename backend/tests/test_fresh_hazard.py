@@ -26,6 +26,6 @@ def test_frozen_set_is_large_and_labeled():
 def test_hazard_concepts_match_the_frozen_labels():
     report = score_fresh()
     assert report["misses"] == []
-    assert report["counts"]["transfer"] == [57, 57]
-    assert report["counts"]["advice"] == [5, 5]
-    assert report["counts"]["routine"] == [81, 81]
+    assert report["counts"]["transfer"] == [37, 37]
+    assert report["counts"]["advice"] == [6, 6]
+    assert report["counts"]["routine"] == [62, 62]

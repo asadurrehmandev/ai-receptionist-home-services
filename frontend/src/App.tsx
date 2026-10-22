@@ -34,7 +34,7 @@ function DeskLogin({ onReady }: { onReady: () => void }) {
       <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">Northline</p>
       <h1 className="mt-2 font-display text-4xl">Desk sign-in</h1>
       <p className="mt-3 text-sm text-muted-foreground">
-        This board is locked. Paste the admin token to load calls, leads, and the simulator.
+        This board is locked. Paste the admin token to load calls and leads. The call simulator is only available when demo mode is on.
       </p>
       <form className="mt-6 space-y-3" onSubmit={submit}>
         <Input

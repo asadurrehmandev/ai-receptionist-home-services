@@ -11,11 +11,12 @@ COPY requirements.txt requirements-dev.txt pytest.ini ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 COPY backend /app/backend
 COPY config /app/config
+COPY evals /app/evals
 COPY --from=web /web/dist /app/frontend/dist
 ENV STATIC_DIR=/app/frontend/dist
 ENV DATABASE_PATH=/app/data/receptionist.db
-ENV PYTHONPATH=/app/backend
+ENV PYTHONPATH=/app/backend:/app
 ENV PYTHONUNBUFFERED=1
 ENV DEMO_MODE=0
 EXPOSE 43123
-CMD ["uvicorn", "app.main:app", "--app-dir", "backend", "--host", "127.0.0.1", "--port", "43123"]
+CMD ["uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "43123"]

@@ -26,9 +26,10 @@ from app.voice.twilio import (
     gather_twiml,
     public_url,
     say_and_hangup,
+    consume_stream_token,
+    mint_stream_token,
     signature_is_valid,
     stream_secret,
-    stream_token_valid,
     stream_twiml,
     stream_ws_url,
     use_media_stream,
@@ -196,7 +197,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not _authorized(request, form):
             return Response(status_code=403)
         if use_media_stream(config, settings):
-            xml = stream_twiml(stream_ws_url(request, settings))
+            secret = stream_secret(settings)
+            token = mint_stream_token(secret) if secret else None
+            xml = stream_twiml(stream_ws_url(request, settings), token)
             return Response(content=xml, media_type="application/xml")
         call_sid = form.get("CallSid") or None
         started = service.start("twilio", external_id=call_sid, caller_id=form.get("From"))
@@ -238,6 +241,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if status in {"no-answer", "busy", "failed", "canceled"}:
             from app.integrations import send_sms
 
+            leg = request.query_params.get("leg") or ""
+            if config.on_call_phone_2 and leg != "2":
+                action = _dial_action(request) + "?leg=2"
+                xml = dial_twiml(
+                    f"{config.on_call_name} didn't pick up. I'm trying the backup on-call number.",
+                    config.on_call_phone_2,
+                    voice,
+                    action,
+                    config.phone_e164,
+                )
+                return Response(content=xml, media_type="application/xml")
             page = send_sms(
                 settings,
                 config.on_call_phone,
@@ -250,31 +264,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 page["status"],
                 datetime.now(config.zone),
             )
+            spanish = _caller_language(form.get("CallSid")) == "es"
             if page["status"] == "sent":
                 say = (
-                    f"{config.on_call_name} didn't pick up. The on-call tech is being paged. "
-                    "If you smell gas, leave the house and call 911."
+                    f"{config.on_call_name} no contestó. Estamos avisando al técnico de guardia. "
+                    "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."
+                    if spanish
+                    else f"{config.on_call_name} didn't pick up. The on-call tech is being paged. "
+                    "If you smell gas, leave the house and call 911 or your gas company."
                 )
             else:
                 say = (
-                    f"{config.on_call_name} didn't pick up. If you smell gas, leave the house and call 911. "
-                    "We have not sent a text. Please call the shop again if you still need a person."
+                    f"{config.on_call_name} no contestó. Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas. "
+                    "No hemos enviado un mensaje."
+                    if spanish
+                    else f"{config.on_call_name} didn't pick up. If you smell gas, leave the house and call 911 or your gas company. "
+                    "We have not sent a text."
                 )
-            return Response(content=say_and_hangup(say, voice), media_type="application/xml")
+            return Response(content=say_and_hangup(say, "Polly.Lupe" if spanish else voice), media_type="application/xml")
         return Response(content=say_and_hangup("Thanks for holding. Goodbye.", voice), media_type="application/xml")
 
     @app.websocket("/api/voice/stream")
     async def media_stream(websocket: WebSocket):
-        if not _stream_allowed(websocket):
-            await websocket.close(code=1008)
-            return
         await websocket.accept()
         bridge = bridge_from_settings(service, settings)
+        authorized = bool(settings.demo_mode)
+        secret = stream_secret(settings)
         try:
             while True:
                 raw = await websocket.receive_text()
-                for message in bridge.handle(loads_message(raw)):
-                    await websocket.send_text(json.dumps(message))
+                message = loads_message(raw)
+                if not authorized:
+                    if message.get("event") == "connected":
+                        continue
+                    token = ""
+                    if message.get("event") == "start":
+                        custom = (message.get("start") or {}).get("customParameters") or {}
+                        token = str(custom.get("token") or "")
+                    if not consume_stream_token(secret, token):
+                        await websocket.close(code=1008)
+                        return
+                    authorized = True
+                for frame in bridge.handle(message):
+                    await websocket.send_text(json.dumps(frame))
         except WebSocketDisconnect:
             return
         except ValueError:
@@ -318,14 +350,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not _admin_ok.get():
             raise HTTPException(status_code=401, detail="Admin token required")
 
-    def _stream_allowed(websocket: WebSocket) -> bool:
-        token = websocket.query_params.get("token") or ""
-        secret = stream_secret(settings)
-        if secret and stream_token_valid(secret, token):
-            return True
-        if settings.demo_mode and not token:
-            return True
-        return False
+    def _caller_language(call_sid: str | None) -> str:
+        if not call_sid:
+            return "en"
+        call_id = store.get_call_by_external(call_sid)
+        if not call_id:
+            return "en"
+        try:
+            return store.load_state(call_id).language or "en"
+        except Exception:
+            return "en"
 
     @app.middleware("http")
     async def guard_api(request: Request, call_next):

@@ -20,6 +20,8 @@ from app.agent.nlu import (
     extract_zip,
     format_phone,
     guess_bare_name,
+    house_correction,
+    last4_correction,
     is_correction,
     is_haggle,
     is_clean_yes,
@@ -65,6 +67,7 @@ class SessionState:
     verified: bool = False
     verify_last4: str | None = None
     verify_day: str | None = None
+    verify_fails: int = 0
     messages: list = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
 
@@ -85,13 +88,15 @@ class TurnResult:
 
 
 _BATTERY_EN = (
-    "A chirping carbon monoxide alarm often means the battery is low. Replace the battery. "
-    "If it keeps sounding after that, leave the house and call 911. I can still schedule a technician."
+    "If a carbon monoxide alarm is sounding, leave the house and call 911. "
+    "A single chirp is often a low battery, and I can still schedule a technician."
 )
 _BATTERY_ES = (
-    "Si el detector de monóxido solo pita, casi siempre es la pila. Cambie la pila. "
-    "Si sigue sonando, salga de la casa y llame al 911. También puedo agendar una visita."
+    "Si la alarma de monóxido está sonando, salga de la casa y llame al 911. "
+    "Un solo pitido suele ser la pila, y puedo agendar una visita."
 )
+_ASK_EN = "Is anyone in danger right now? I can connect you to the on-call technician."
+_ASK_ES = "¿Hay alguien en peligro ahora mismo? Puedo comunicarlo con el técnico de guardia."
 
 
 def _looks_like_verification(text: str) -> bool:
@@ -114,6 +119,7 @@ class Engine:
         self.clock = clock
         self.sms_sender = None
         self._sms_delivery = "not_sent"
+        self.verify_fails_by_key: dict[str, int] = {}
 
     @property
     def now(self) -> datetime:
@@ -156,6 +162,20 @@ class Engine:
         if looks_spanish(raw):
             state.language = "es"
 
+        if state.phase == "hazard_check":
+            level_now, emergency_now = classify_emergency(raw)
+            if level_now == "definite" or is_yes(raw):
+                state.hazard = emergency_now or "Caller confirmed danger"
+                self._fill(state, raw)
+                return self._escalate(state, started, state.hazard)
+            if is_no(raw):
+                state.phase = "discover"
+                self._fill(state, raw)
+                return self._continue_intake(state, raw, started)
+            else:
+                state.hazard = "Uncertain hazard"
+                return self._escalate(state, started, state.hazard)
+
         if state.hazard:
             return self._escalate(state, started, state.hazard)
 
@@ -166,6 +186,11 @@ class Engine:
             state.issue = emergency
             state.hazard = emergency
             return self._escalate(state, started, emergency)
+        if level == "ask":
+            self._fill(state, raw)
+            state.phase = "hazard_check"
+            state.issue = state.issue or emergency
+            return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
         if level == "advice":
             self._fill(state, raw)
             state.issue = state.issue or "CO detector battery"
@@ -187,7 +212,7 @@ class Engine:
                 return self._continue_intake(state, raw, started)
             return self._finish(
                 state,
-                "Puedo seguir en español. ¿Qué está pasando: una fuga, sin calor, o algo peligroso? Si huele a gas, salga y llame al 911.",
+                "Puedo seguir en español. ¿Qué está pasando: una fuga, sin calor, o algo peligroso? Si huele a gas, salga y llame al 911 o a la compañía de gas.",
                 started,
             )
 
@@ -236,15 +261,43 @@ class Engine:
         if state.phase in {"collect_issue", "collect_name", "collect_phone", "collect_address", "collect_zip"}:
             self._fill(state, raw)
             if state.phase == "collect_issue" and not state.issue:
-                return self._finish(state, "Tell me a bit more about what's going wrong.", started)
+                return self._finish(
+                    state,
+                    self._line(state, "Tell me a bit more about what's going wrong.", "Cuénteme un poco más qué está fallando."),
+                    started,
+                )
             if state.phase == "collect_name" and not state.name:
-                return self._finish(state, "Sorry, I missed the name. Who am I speaking with?", started)
+                return self._finish(
+                    state,
+                    self._line(state, "Sorry, I missed the name. Who am I speaking with?", "Perdón, no escuché el nombre. ¿Con quién hablo?"),
+                    started,
+                )
             if state.phase == "collect_phone" and not state.phone:
-                return self._finish(state, "I still need a phone number. What's the best number for the technician?", started)
+                return self._finish(
+                    state,
+                    self._line(
+                        state,
+                        "I still need a phone number. What's the best number for the technician?",
+                        "Todavía necesito un teléfono. ¿Cuál es el mejor número para el técnico?",
+                    ),
+                    started,
+                )
             if state.phase == "collect_address" and not state.street:
-                return self._finish(state, "I still need the street address. What's the house number and street?", started)
+                return self._finish(
+                    state,
+                    self._line(
+                        state,
+                        "I still need the street address. What's the house number and street?",
+                        "Todavía necesito la calle. ¿Cuál es el número y la calle?",
+                    ),
+                    started,
+                )
             if state.phase == "collect_zip" and self._area(state) == "unknown":
-                return self._finish(state, "Which ZIP code is the property in?", started)
+                return self._finish(
+                    state,
+                    self._line(state, "Which ZIP code is the property in?", "¿Cuál es el código postal de la propiedad?"),
+                    started,
+                )
             return self._continue_intake(state, raw, started)
 
         if state.phase == "quote_decision":
@@ -276,8 +329,15 @@ class Engine:
         if not state.caller_id:
             pass
         phone, _ = extract_phone(text)
-        if phone and (not state.phone or is_correction(text)):
+        last4 = last4_correction(text)
+        if last4 and state.phone:
+            state.phone = state.phone[:-4] + last4
+        elif phone and (not state.phone or is_correction(text)):
             state.phone = phone
+        house = house_correction(text)
+        if house and state.street and house[1] in state.street:
+            state.street = state.street.replace(house[1], house[0], 1)
+            state.address = _compose_address(state.street, state.city, state.zip)
         found_zip = extract_zip(text)
         if found_zip and (not state.zip or is_correction(text)):
             state.zip = found_zip
@@ -285,8 +345,8 @@ class Engine:
             city = extract_city(text, self.config.cities)
             if city:
                 state.city = city
-        street = extract_street(text, self.config.cities)
-        if street and (not state.street or is_correction(text)):
+        street = None if last4 else extract_street(text, self.config.cities)
+        if street and (not state.street or is_correction(text) or house):
             state.street = street
         if state.street:
             state.address = _compose_address(state.street, state.city, state.zip)
@@ -299,7 +359,7 @@ class Engine:
         if state.name and is_correction(text):
             parts = state.name.split()
             replacement = spelled
-            meant = re.search(r"\b(?:it's|its|meant)\s+([A-Za-z][A-Za-z']+)\b", text, re.I)
+            meant = re.search(r"\b(?:it's|its|meant)\s+([^\W\d_](?:[^\W\d_]|['-])+)\b", text, re.I)
             if replacement is None and meant and meant.group(1).lower() not in {"the", "a", "my"}:
                 replacement = meant.group(1).capitalize()
             if replacement and parts:
@@ -319,7 +379,11 @@ class Engine:
     def _continue_intake(self, state: SessionState, text: str, started: float) -> TurnResult:
         if not state.issue:
             state.phase = "collect_issue"
-            return self._finish(state, "What seems to be the problem at the property?", started)
+            return self._finish(
+                state,
+                self._line(state, "What seems to be the problem at the property?", "¿Qué problema hay en la propiedad?"),
+                started,
+            )
         if state.intent == "quote" and not state.quote_given:
             state.quote_given = True
             state.wish = text
@@ -331,16 +395,40 @@ class Engine:
             )
         if not state.name:
             state.phase = "collect_name"
-            return self._finish(state, "Who am I speaking with? Can I get your first and last name?", started)
+            return self._finish(
+                state,
+                self._line(
+                    state,
+                    "Who am I speaking with? Can I get your first and last name?",
+                    "¿Con quién hablo? ¿Su nombre y apellido?",
+                ),
+                started,
+            )
         if not state.phone:
             state.phase = "collect_phone"
-            return self._finish(state, "What's the best phone number for the technician?", started)
+            return self._finish(
+                state,
+                self._line(
+                    state,
+                    "What's the best phone number for the technician?",
+                    "¿Cuál es el mejor teléfono para el técnico?",
+                ),
+                started,
+            )
         if not state.street:
             state.phase = "collect_address"
-            return self._finish(state, "What's the street address?", started)
+            return self._finish(
+                state,
+                self._line(state, "What's the street address?", "¿Cuál es la dirección?"),
+                started,
+            )
         if self._area(state) == "unknown":
             state.phase = "collect_zip"
-            return self._finish(state, "Which ZIP code is the property in?", started)
+            return self._finish(
+                state,
+                self._line(state, "Which ZIP code is the property in?", "¿Cuál es el código postal de la propiedad?"),
+                started,
+            )
         if self._area(state) == "no":
             return self._out_of_area(state, started)
         return self._offer(state, text, started)
@@ -393,11 +481,9 @@ class Engine:
             return self._finish(state, prefix + self._confirm_line(state, choice), started)
         state.selected = None
         state.phase = "offer"
-        return self._finish(
-            state,
-            f"{prefix}I can come {join_slots(slots)}. Which works best?",
-            started,
-        )
+        english = f"{prefix}I can come {join_slots(slots)}. Which works best?"
+        spanish = f"Puedo ir {join_slots(slots)}. ¿Cuál le queda?"
+        return self._finish(state, self._line(state, english, spanish), started)
 
     def _on_offer(self, state: SessionState, text: str, started: float) -> TurnResult:
         preference = parse_preference(text, self.now)
@@ -416,6 +502,10 @@ class Engine:
         return self._finish(state, self._confirm_line(state, choice), started)
 
     def _on_confirm(self, state: SessionState, text: str, started: float) -> TurnResult:
+        if house_correction(text) and state.address:
+            moment = self._selected(state)
+            if moment is not None:
+                return self._finish(state, self._confirm_line(state, moment), started)
         offered = self._offered(state)
         preference = parse_preference(text, self.now)
         if preference is not None and (is_correction(text) or not _choice_fits(self._selected(state), preference)):
@@ -543,18 +633,33 @@ class Engine:
             found = self._verified_booking(state)
             if found is None:
                 if state.verify_last4 and state.verify_day:
-                    state.phase = "discover"
-                    state.pending_action = None
+                    state.verify_fails += 1
+                    key = state.verify_last4
+                    self.verify_fails_by_key[key] = self.verify_fails_by_key.get(key, 0) + 1
+                    state.verify_day = None
+                    if state.verify_fails >= 3 or self.verify_fails_by_key[key] >= 3:
+                        return self._lockout(state, started)
+                    state.phase = "existing_lookup"
                     return self._finish(
                         state,
-                        "I don't have a visit with those last four digits on that day. "
-                        "If this is a new repair, tell me what's going on.",
+                        self._line(
+                            state,
+                            "I don't have a visit with those last four digits on that day. "
+                            "You can try again. I won't read the street.",
+                            "No tengo una visita con esos cuatro dígitos en ese día. "
+                            "Puede intentar otra vez. No leo la calle.",
+                        ),
                         started,
                     )
                 return self._finish(
                     state,
-                    "I need the last four digits of the phone on the visit, and the day it is scheduled. "
-                    "I won't read the address before those match.",
+                    self._line(
+                        state,
+                        "I need the last four digits of the phone on the visit, and the day it is scheduled. "
+                        "I won't read the address before those match.",
+                        "Necesito los últimos cuatro dígitos del teléfono de la visita y el día. "
+                        "No leo la dirección antes de que coincidan.",
+                    ),
                     started,
                 )
             self._adopt(state, found)
@@ -605,6 +710,13 @@ class Engine:
             events,
         )
 
+    def _lockout(self, state: SessionState, started: float) -> TurnResult:
+        result = self._escalate(state, started, "Verification lockout")
+        event = {"type": "verification_failed", "payload": {"last4": state.verify_last4, "attempts": state.verify_fails}}
+        result.events.append(event)
+        state.events.append(event)
+        return result
+
     def _escalate(self, state: SessionState, started: float, reason: str) -> TurnResult:
         state.outcome = "escalated"
         state.phase = "closed"
@@ -612,7 +724,7 @@ class Engine:
         if state.language == "es":
             say = (
                 f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
-                "Si huele a gas, salga de la casa y llame al 911. "
+                "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas. "
                 f"La tarifa de emergencia es ${self.config.emergency_dispatch_usd}."
             )
         elif reason == "Caller requested a person":
@@ -623,7 +735,7 @@ class Engine:
         else:
             say = (
                 f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
-                f"Please stay on the line. If you smell gas, leave the house and call 911. "
+                f"Please stay on the line. If you smell gas, leave the house and call 911 or your gas company. "
                 f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
             )
         if state.address and reason != "Caller requested a person":
@@ -733,6 +845,9 @@ class Engine:
     def _confirm_line(self, state: SessionState, moment: datetime) -> str:
         where = state.address or "the service address"
         phone = format_phone(state.phone)
+        if state.language == "es":
+            phone_bit = f" Anoto {phone} en la visita." if phone else ""
+            return f"¿Lo dejo para {format_slot(moment)} en {where}?{phone_bit}"
         phone_bit = f" I'll note {phone} on the visit." if phone else ""
         return f"Should I lock that in for {format_slot(moment)} at {where}?{phone_bit}"
 
