@@ -38,11 +38,12 @@ export function Leads() {
   return (
     <div className="space-y-5">
       <header>
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">n8n · GoHighLevel</p>
+        <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">GoHighLevel · HubSpot · Zapier</p>
         <h1 className="mt-1 font-display text-4xl">Leads and handoff</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Qualified callers become leads. Bookings, cancellations, and emergency transfers each emit a webhook payload
-          the shop’s automation can consume. Texts are logged, not sent, until a messaging provider is attached.
+          Qualified callers become leads. Bookings, cancellations, and emergency transfers each emit a generic CRM
+          webhook (GoHighLevel, HubSpot, or Zapier-compatible). Texts are logged, not sent, until a messaging provider
+          is attached.
         </p>
       </header>
       <Tabs defaultValue="leads">

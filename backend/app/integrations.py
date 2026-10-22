@@ -113,7 +113,7 @@ def synthesize_ulaw(text: str, api_key: str, voice_id: str, client: httpx.Client
 
 def deliver_webhook(url: str, payload: dict) -> dict:
     if not url:
-        return {"status": "mock", "code": None, "detail": "Logged locally. Set crm.webhook_url to deliver to n8n or GoHighLevel."}
+        return {"status": "mock", "code": None, "detail": "Logged locally. Set crm.webhook_url to deliver to your CRM (GoHighLevel, HubSpot, or Zapier)."}
     try:
         response = httpx.post(url, json=payload, timeout=5)
     except httpx.HTTPError as exc:

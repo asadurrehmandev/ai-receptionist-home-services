@@ -111,9 +111,9 @@ escalation:
   keywords_note: Burst pipes, gas, carbon monoxide, sewage backup, active flooding, electrical sparking.
 
 crm:
-  # Leave blank to log payloads locally. Point this at n8n or GoHighLevel when you go live.
+  # Leave blank to log payloads locally. Point this at a GoHighLevel, HubSpot, or Zapier-compatible CRM webhook when you go live.
   webhook_url: ""
-  provider_label: n8n / GoHighLevel
+  provider_label: GoHighLevel / HubSpot / Zapier
 
 voice:
   # gather uses Twilio speech recognition. stream requires DEEPGRAM_API_KEY and ELEVENLABS_API_KEY.

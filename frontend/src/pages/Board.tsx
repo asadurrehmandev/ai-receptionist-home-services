@@ -148,8 +148,8 @@ export function Board() {
           </Link>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Each booking, escalation, and qualified lead is posted as JSON. With no URL configured, delivery is logged
-          locally so n8n or GoHighLevel can be pointed at it later.
+          Each booking, escalation, and qualified lead is posted as JSON to a generic CRM webhook. With no URL
+          configured, delivery is logged locally so GoHighLevel, HubSpot, or Zapier can be pointed at it later.
         </p>
         <ul className="mt-3 grid gap-2 md:grid-cols-2">
           {data.webhooks.slice(0, 4).map((hook) => {

@@ -20,7 +20,7 @@ An AI receptionist that:
 - Checks a calendar against real shop hours and service area
 - Books a 90-minute window and logs a confirmation text
 - Transfers burst pipes, gas, carbon monoxide, sewage backups, flooding, and electrical sparking to the on-call technician
-- Pushes the lead to a mock CRM and a webhook ready for n8n or GoHighLevel
+- Pushes the lead to a mock CRM and a generic CRM webhook (GoHighLevel, HubSpot, or Zapier-compatible)
 
 Swap `config/business.yaml` and the same desk serves a different company: name, services, hours, ZIP codes, price bands, and the escalation number.
 
@@ -48,7 +48,7 @@ flowchart LR
   llm -->|must keep times and prices| rules
   rules --> cal
   rules --> crm
-  crm -->|job.booked, call.escalated| n8n[n8n or GoHighLevel]
+  crm -->|job.booked, call.escalated| hook[CRM webhook]
   api --> desk
 ```
 
@@ -78,11 +78,11 @@ Without keys, Twilio uses its own speech recognition and a spoken reply (`<Gathe
 
 ![Booked jobs on the week calendar](docs/screenshots/calendar.png)
 
-![Webhook payload ready for n8n or GoHighLevel](docs/screenshots/crm_webhooks.png)
+![CRM webhook payload for GoHighLevel, HubSpot, or Zapier](docs/screenshots/crm_webhooks.png)
 
-The board, a gas-smell transfer to the on-call technician, and the booked-jobs calendar:
+The board’s CRM handoff, then the webhook log on the Leads page:
 
-![Fifteen-second walkthrough](docs/screenshots/walkthrough.gif)
+![Walkthrough of the board and CRM webhook](docs/screenshots/walkthrough.gif)
 
 ## Run it
 
@@ -117,7 +117,7 @@ The scenario suite drives the receptionist as text and asserts outcome, intent, 
 4. Set `TWILIO_AUTH_TOKEN` so the app checks `X-Twilio-Signature`. Leave it empty only for local curl tests.
 5. Optional: `OPENAI_API_KEY` (and `OPENAI_BASE_URL` / `OPENAI_MODEL` if you are not on OpenAI) to rephrase replies.
 6. Optional: `DEEPGRAM_API_KEY` and `ELEVENLABS_API_KEY` to switch that number from Gather to Media Streams. `voice.mode` in the YAML can force `gather` or `stream`. Stream mode stays on Gather until both keys exist, so a half-configured shop still answers.
-7. Set `crm.webhook_url` in `config/business.yaml` to an n8n or GoHighLevel inbound webhook. Until then, payloads are logged on the Leads page with status `mock`.
+7. Set `crm.webhook_url` in `config/business.yaml` to a CRM webhook. GoHighLevel, HubSpot, and Zapier all accept this JSON. Until a URL is set, payloads are logged on the Leads page with status `mock`.
 
 A burst pipe or gas smell returns TwiML that dials `escalation.on_call_phone` after Riley tells the caller who is picking up.
 
