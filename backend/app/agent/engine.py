@@ -19,13 +19,10 @@ from app.agent.nlu import (
     extract_street,
     extract_zip,
     format_phone,
-    danger_affirmed,
     detect_language,
     fallback_name,
     guess_bare_name,
     house_correction,
-    is_garbled,
-    is_negated_danger,
     last4_correction,
     is_correction,
     is_haggle,
@@ -33,7 +30,7 @@ from app.agent.nlu import (
     is_no,
     is_spam,
     is_yes,
-    wants_callback,
+    safety_decision,
     spelled_word,
     wants_abandon,
     wants_cancel,
@@ -178,6 +175,8 @@ class Engine:
 
         if state.phase == "hazard_check":
             return self._answer_hazard_check(state, raw, started)
+        if state.phase == "unclear_handoff":
+            return self._unclear_handoff(state, raw, started)
 
         if state.hazard:
             return self._escalate(state, started, state.hazard)
@@ -209,9 +208,6 @@ class Engine:
         if state.language != "en":
             self._fill(state, raw)
             return self._language_handoff(state, started)
-
-        if state.phase == "unclear_handoff":
-            return self._unclear_handoff(state, raw, started)
 
         if wants_human(raw):
             self._fill(state, raw)
@@ -832,25 +828,34 @@ class Engine:
             say = f"{prefix} {say}"
         return self._finish(state, say, started, self._capture_events(state, "lead.callback"))
 
-    def _answer_hazard_check(self, state: SessionState, raw: str, started: float) -> TurnResult:
-        """A no, a negation, or an ordinary answer does not page. A yes does."""
+    def _safety_answer(self, state: SessionState, raw: str, started: float, *, on_clear: str) -> TurnResult:
+        """One decision for both safety questions. Unclear pages. A clean no does not.
+
+        on_clear is 'intake' after a hazard question, or 'callback' after the
+        unclear-path question, where a clean no still does not name a job.
+        """
         level_now, emergency_now = classify_emergency(raw)
         if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
             state.hazard = emergency_now
             self._fill(state, raw)
             return self._escalate(state, started, state.hazard)
-        affirmed = danger_affirmed(raw)
-        declined = is_negated_danger(raw) or (is_no(raw) and not affirmed) or (wants_callback(raw) and not affirmed)
-        if declined or not affirmed and not is_garbled(raw):
+        decision = safety_decision(raw)
+        if decision == "page":
+            state.hazard = "Caller confirmed danger"
             self._fill(state, raw)
-            state.degraded_asked = True
-            if state.language != "en":
-                return self._language_handoff(state, started)
-            state.phase = "discover"
-            return self._continue_intake(state, raw, started)
-        state.hazard = "Caller confirmed danger"
+            return self._escalate(state, started, state.hazard)
         self._fill(state, raw)
-        return self._escalate(state, started, state.hazard)
+        if decision == "callback" or on_clear == "callback":
+            return self._office_callback(state, started)
+        state.degraded_asked = True
+        if state.language != "en":
+            return self._language_handoff(state, started)
+        state.phase = "discover"
+        return self._continue_intake(state, raw, started)
+
+    def _answer_hazard_check(self, state: SessionState, raw: str, started: float) -> TurnResult:
+        """A clean no continues intake. Any other answer pages, or transfers warm."""
+        return self._safety_answer(state, raw, started, on_clear="intake")
 
     def _address_prefix(self, state: SessionState) -> str:
         if state.address_from_prompt and state.address and not state.address_read_back:
@@ -859,33 +864,8 @@ class Engine:
         return ""
 
     def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
-        """After two unclear tries, one safety question. Negation and a callback do not page."""
-        self._fill(state, raw)
-        level_now, emergency_now = classify_emergency(raw)
-        if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
-            state.hazard = emergency_now
-            return self._escalate(state, started, state.hazard)
-        affirmed = danger_affirmed(raw)
-        declined = is_negated_danger(raw) or (is_no(raw) and not affirmed) or (wants_callback(raw) and not affirmed)
-        if declined:
-            return self._office_callback(state, started)
-        if affirmed:
-            state.hazard = state.hazard or "Caller confirmed danger"
-            return self._escalate(state, started, state.hazard)
-        intent = detect_intent(raw)
-        if intent not in {None, "unclear", "spam"}:
-            state.intent = intent
-            state.unclear_count = 0
-            state.phase = "discover"
-            return self._continue_intake(state, raw, started)
-        if state.safety_reasks < 1:
-            state.safety_reasks += 1
-            return self._finish(
-                state,
-                "I didn't catch that. Is anyone in danger right now, or should a person call you back?",
-                started,
-            )
-        return self._office_callback(state, started)
+        """The answer to the unclear-path safety question. It does not ask again."""
+        return self._safety_answer(state, raw, started, on_clear="callback")
 
     def _office_callback(self, state: SessionState, started: float) -> TurnResult:
         state.outcome = "callback"

@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
+from app.agent.hazard_nli import nli_ready
 from app.agent.hazard_semantic import semantic_ready
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
@@ -90,7 +91,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        ready = semantic_ready()
+        semantic = semantic_ready()
+        nli = nli_ready()
+        ready = semantic and nli
         body = {
             "ok": ready,
             "business": config.name,
@@ -104,7 +107,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "model": settings.anthropic_model if settings.llm_ready else None,
             "voice_ready": _voice_block_reason() is None,
             "voice_block_reason": _voice_block_reason(),
-            "semantic_ready": ready,
+            "semantic_ready": semantic,
+            "nli_ready": nli,
         }
         if not ready:
             return JSONResponse(status_code=503, content=body)

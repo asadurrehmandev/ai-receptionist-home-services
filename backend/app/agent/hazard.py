@@ -678,7 +678,11 @@ def _loose_flue(text: str) -> bool:
 def _alarm_with_symptom(text: str) -> bool:
     if not re.search(r"\b(alarm|detector)\b", text):
         return False
-    if not _hit(text, _SYMPTOM):
+    person_sick = re.search(
+        r"\b(?:feel|feels|felt|feeling)\s+(?:faint|dizzy|lightheaded|sick|woozy)\b",
+        text,
+    )
+    if not _hit(text, _SYMPTOM) and not (person_sick and not _negated_at(text, person_sick.start())):
         return False
     sounding = re.search(
         r"\b(sounding|going off|won't quit|wont quit|will not quit|won't stop|wont stop|"
@@ -750,6 +754,263 @@ def _uncertain_without_model(text: str) -> bool:
     )
 
 
+_PRESENT_CUE = re.compile(
+    r"\b(smells?|smelling|hissing|smoke|smoking|flames?|sparks?|sparking|"
+    r"pouring|gushing|spraying|spewing|flooding|again|right now|"
+    r"won't stop|wont stop|will not stop|coming in|is leaking|"
+    r"dizzy|faint|nause\w*|lightheaded)\b",
+    re.I,
+)
+_PAST_FRAME = re.compile(
+    r"\b(?:yesterday|previously|earlier|ago)\b|"
+    r"\blast\s+[a-z]+\b|"
+    r"\balready\s+(?:fixed|repaired|resolved|serviced|replaced|finished|capped|tagged)\b|"
+    r"\b(?:was|were|been|got|had)\s+(?:\w+\s+){0,3}"
+    r"(?:fixed|repaired|resolved|serviced|replaced|finished|capped|tagged|quiet)\b",
+    re.I,
+)
+_HYPOTHETICAL_FRAME = re.compile(
+    r"\b(what if|hypothetically|suppose|supposing|what would|how much would|"
+    r"if we ever|if there were|if it were|someday)\b",
+    re.I,
+)
+_PRICE_FRAME = re.compile(
+    r"\b(how much|how many|price|cost|estimate|quot\w*|rate|charge|fee|after[- ]hours)\b",
+    re.I,
+)
+_HABITUAL = re.compile(
+    r"\b(each year|every year|every winter|every summer|every fall|every spring|"
+    r"whenever we|the first time we)\b",
+    re.I,
+)
+_UNSURE = re.compile(
+    r"\b(not sure|don't know|do not know|cannot tell|can't tell|unsure)\b",
+    re.I,
+)
+_YOUNG = re.compile(
+    r"\b(baby|babies|infant|newborns?|twins?|triplets?|"
+    r"\d+\s*-?\s*(?:day|days|week|weeks)\s*-?\s*old|"
+    r"\d+\s*-\s*(?:day|week)-old|(?:day|week|days|weeks)-old)\b|"
+    r"\bborn\b.{0,24}\b(?:day|days|week|weeks)\b|"
+    r"\b(?:day|days|week|weeks)\b.{0,24}\bborn\b",
+    re.I,
+)
+_COLD_HOME = re.compile(
+    r"\b(ice[- ]cold|forties|fifties|shivering|no heat|without heat|"
+    r"heat (?:died|is out|won't|wont|will not)|freezing)\b",
+    re.I,
+)
+_GARAGE = re.compile(r"\bgarage\b", re.I)
+_MACHINE_RUNNING = re.compile(
+    r"\b(car|truck|vehicle|engine|motor|generator|pickup)\b.{0,48}\b(running|idling|left on|is on)\b|"
+    r"\b(running|idling|left on|is on)\b.{0,48}\b(car|truck|vehicle|engine|motor|generator|pickup)\b",
+    re.I,
+)
+_GARAGE_SICK = re.compile(
+    r"\b(dizzy|faint|lightheaded|sleepy|confused|headache|nause\w*|"
+    r"hard to wake|won't wake|wont wake|will not wake|passed out)\b",
+    re.I,
+)
+_STRUCT_DEFORM = re.compile(r"\b(bow\w*|sag\w*|bulg\w*|swollen|sheeting|tracking)\b", re.I)
+_STRUCT_SURFACE = re.compile(r"\b(ceiling|drywall|plaster|stair)\b", re.I)
+_DEPTH = re.compile(
+    r"\b(?:\d+|one|two|three|four|five|six|several)\s+(?:inch(?:es)?|foot|feet)\s+of\s+water\b",
+    re.I,
+)
+_PLAIN_FIXTURE = re.compile(
+    r"\b(spigots?|hose bibs?|bibbs?|sillcocks?|outdoor faucets?|"
+    r"water pressure|low pressure|shower pressure)\b",
+    re.I,
+)
+_ROUTINE_SERVICE = re.compile(
+    r"\b(no hot water|water heaters?|disposals?|thermostats?|faucets?|"
+    r"clog(?:ged)?|puddles?|dripp\w*|spigots?|hose bibs?|sillcocks?|"
+    r"water pressure|low pressure|shower pressure)\b",
+    re.I,
+)
+
+
+def _present_hazard_cue(text: str) -> bool:
+    """A current smell, flow, or symptom. A conditional 'if it were hissing' is not one."""
+    scrubbed = re.sub(
+        r"\b(?:if|would|were|was)\b.{0,32}\b(?:hissing|smelling|leaking|running)\b",
+        " ",
+        text,
+        flags=re.I,
+    )
+    return any(not _negated_at(scrubbed, match.start()) for match in _PRESENT_CUE.finditer(scrubbed))
+
+
+def _young_person(text: str) -> bool:
+    return bool(_YOUNG.search(text) or re.search(r"\b(baby|infant|newborn)\b", text))
+
+
+def _young_cold(text: str) -> bool:
+    if not _young_person(text):
+        return False
+    if _COMFORT.search(text) or _COMFORT_ALT.search(text) or _FREEZING.search(text) or _extreme_temperature(text):
+        return True
+    return bool(_COLD_HOME.search(text))
+
+
+def _structural_water(text: str) -> bool:
+    """Water that is deforming the building, standing deep, or leaving a split main."""
+    if not re.search(r"\bwater\b", text) and not re.search(r"\b(split|burst|throwing)\b", text):
+        return False
+    if _STRUCT_SURFACE.search(text) and _STRUCT_DEFORM.search(text) and re.search(r"\bwater\b", text):
+        return True
+    if re.search(r"\bwater\b", text) and re.search(r"\bceiling\b", text) and re.search(r"\bsoft\b", text):
+        return True
+    if re.search(r"\bwater\b.{0,48}\b(?:down|along)\b.{0,32}\b(?:wall|walls|stair)\b", text):
+        return True
+    if _DEPTH.search(text) and re.search(
+        r"\b(coming|rising|standing|keeps|still|equipment|furnace|heater|mechanical|up to)\b",
+        text,
+    ):
+        return True
+    if re.search(r"\b(main|supply)\b", text) and re.search(r"\b(split|burst|ruptur\w*|blew)\b", text):
+        if re.search(r"\b(water|throwing|spraying|gushing)\b", text):
+            return True
+    if re.search(r"\bwater\b.{0,40}\bup to the (?:furnace|heater|panel|equipment)\b", text):
+        return True
+    return False
+
+
+def _garage_exhaust(text: str) -> bool:
+    if not _GARAGE.search(text) or not _MACHINE_RUNNING.search(text):
+        return False
+    return bool(_GARAGE_SICK.search(text) or _SYMPTOM.search(text))
+
+
+def _hiss_odor(text: str) -> bool:
+    hiss = re.search(r"\bhiss\w*\b", text)
+    if not hiss or _negated_at(text, hiss.start()):
+        return False
+    if not re.search(r"\b(meter|valve|tank|pipe|line|joint|regulator)\b", text):
+        return False
+    odor = _ODOR_WORD.search(text) or re.search(r"\b(awful|rotten|terrible)\b", text)
+    return bool(odor) and not (odor and _negated_at(text, odor.start()))
+
+
+def _returned_odor(text: str) -> bool:
+    """A present odor after a repair, tag, or shutoff. A price question is not this."""
+    if not _hit(text, _ODOR_WORD):
+        return False
+    if not re.search(r"\b(again|returned|came back|is back|back again|right now)\b", text):
+        return False
+    return bool(re.search(r"\b(repair\w*|fixed|finished|tagged|utility|meter|line|leak\w*|pipe|valve|shut ?off|capped)\b", text))
+
+
+def _dry_trap(text: str) -> bool:
+    """A drain or septic odor with no backup, overflow, standing water, or symptom."""
+    if not re.search(r"\b(drain|sewer|septic|trap)\b", text):
+        return False
+    if not _ODOR_WORD.search(text):
+        return False
+    if any(not _negated_at(text, match.start()) for match in _SEWAGE_MOTION.finditer(text)):
+        return False
+    if re.search(r"\b(overflow\w*|standing|gushing|pouring)\b", text):
+        return False
+    if _SYMPTOM.search(text):
+        return False
+    if _WATER_FORCE.search(text):
+        return False
+    return True
+
+
+def _plain_fixture(text: str) -> bool:
+    if not _PLAIN_FIXTURE.search(text):
+        return False
+    if _present_hazard_cue(text) or _structural_water(text) or _fire_or_smoke(text):
+        return False
+    if _SYMPTOM.search(text) or _young_cold(text):
+        return False
+    return True
+
+
+def _habitual_mild(text: str) -> bool:
+    if not _HABITUAL.search(text):
+        return False
+    if _GAS_WORD.search(text) or _fire_or_smoke(text) or _structural_water(text):
+        return False
+    if _WATER_FORCE.search(text) or _SEWAGE.search(text):
+        return False
+    return True
+
+
+def _routine_service(text: str) -> bool:
+    """A named ordinary job, with no live hazard in the same breath."""
+    if _damp_mark(text) or _borderline(text):
+        return False
+    match = _ROUTINE_SERVICE.search(text)
+    if not match or _negated_at(text, match.start()):
+        return False
+    if _structural_water(text) or _garage_exhaust(text) or _hiss_odor(text) or _returned_odor(text) or _young_cold(text):
+        return False
+    if _fire_or_smoke(text) or _gas_anywhere(text) or _present_hazard_cue(text):
+        return False
+    if _SYMPTOM.search(text):
+        return False
+    return True
+
+
+def _gas_happening(text: str) -> bool:
+    """A gas odor that is being reported now. 'I smelled gas last week' is not."""
+    if not _gas_anywhere(text):
+        return False
+    if re.search(r"\b(smelled|smelt)\b", text) and not _present_hazard_cue(text):
+        return False
+    return True
+
+
+def _framed_away(text: str) -> tuple[str, str | None] | None:
+    """Past, habitual, hypothetical, or price talk is not a page.
+
+    A present hazard cue in the same breath is left for the normal rules.
+    If the caller is unsure, ask instead of paging.
+    """
+    if _habitual_mild(text):
+        return "none", None
+    live = (
+        _structural_water(text)
+        or _garage_exhaust(text)
+        or _hiss_odor(text)
+        or _returned_odor(text)
+        or _young_cold(text)
+        or _fire_or_smoke(text)
+        or _gas_happening(text)
+        or bool(_WATER_FORCE.search(text))
+        or _sewage_active(text)
+        or (_present_hazard_cue(text) and bool(_ELECTRICAL.search(text)))
+    )
+    if live:
+        return None
+    hypothetical = bool(_HYPOTHETICAL_FRAME.search(text))
+    priced = bool(_PRICE_FRAME.search(text))
+    past = bool(_PAST_FRAME.search(text)) and not _present_hazard_cue(text)
+    unsure = bool(_UNSURE.search(text))
+    if unsure and re.search(r"\b(leak\w*|smell\w*|odor\w*|odour\w*|gas|alarm|smoke|furnace|ceiling|hiss\w*)\b", text):
+        return "ask", "Uncertain hazard"
+    if not (hypothetical or priced or past):
+        return None
+    if unsure:
+        return "ask", "Uncertain hazard"
+    return "none", None
+
+
+def _situational_hazard(text: str) -> tuple[str, str] | None:
+    """Class patterns for hazards that do not use the textbook noun."""
+    if _structural_water(text):
+        return "definite", "Active water"
+    if _garage_exhaust(text):
+        return "definite", "Carbon monoxide"
+    if _hiss_odor(text) or _returned_odor(text):
+        return "definite", "Gas"
+    if _young_cold(text):
+        return "definite", "Unsafe indoor temperature"
+    return None
+
+
 def classify_emergency(text: str) -> tuple[str, str | None]:
     """Return ('definite'|'ask'|'advice'|'none', label).
 
@@ -761,6 +1022,9 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
     folded = fold(text)
     if _past_and_quiet(folded):
         return "none", None
+    away = _framed_away(folded)
+    if away is not None:
+        return away
     if _battery_advice(folded) and not _other_hazard(folded):
         return "advice", "CO detector battery"
     advice = False
@@ -793,20 +1057,31 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
     cold = _vulnerable_cold(folded)
     if cold is not None:
         return cold
+    situational = _situational_hazard(folded)
+    if situational is not None:
+        return situational
     if _backup(folded) >= 3:
         return "definite", "Hazard signals"
-    if _explicit_clear(folded) or _routine_context(folded):
+    if (
+        _explicit_clear(folded)
+        or _routine_context(folded)
+        or _dry_trap(folded)
+        or _plain_fixture(folded)
+        or _routine_service(folded)
+    ):
         return "none", None
-    if _borderline(folded) or _damp_mark(folded):
-        return "ask", "Uncertain hazard"
     if _mild_water(folded) and not _GAS_SIGNAL.search(folded) and not _CO_HARD.search(folded):
         if not _unnegated(folded, _ELECTRICAL):
             return "none", None
+    floor: tuple[str, str | None] = ("none", None)
+    if _borderline(folded) or _damp_mark(folded):
+        floor = ("ask", "Uncertain hazard")
+    from app.agent.hazard_nli import nli_opinion
     from app.agent.hazard_semantic import semantic_hazard
 
     guessed = semantic_hazard(text)
     if guessed[1] == "Hazard model unavailable":
-        if _uncertain_without_model(folded):
+        if _uncertain_without_model(folded) or floor[0] == "ask":
             return "ask", "Hazard model unavailable"
         return "none", None
     if _lone_category(folded) and guessed[0] == "definite":
@@ -817,7 +1092,32 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         guessed = ("none", None)
     if guessed[1] == "Electrical hazard" and _soft_electrical(folded):
         guessed = ("ask", "Electrical hazard")
-    return _stricter(("none", None), guessed)
+    if _damp_mark(folded):
+        guessed = ("ask", "Uncertain hazard")
+    guessed = _stricter(floor, guessed)
+    # The zero-shot score only raises an existing safety question to a page.
+    # It does not turn a routine clearance into a question or a page.
+    if guessed[0] != "ask":
+        return guessed
+    opinion = nli_opinion(text)
+    if opinion[0] != "definite":
+        return guessed
+    soft = re.search(
+        r"\b(not sure|don't know|do not know|cannot tell|can't tell|unsure|a little|slightly|maybe|possibly|might)\b",
+        folded,
+    )
+    if soft and not _gas_anywhere(folded) and not _situational_hazard(folded):
+        return guessed
+    if (
+        _lone_category(folded)
+        or _plain_fixture(folded)
+        or _routine_service(folded)
+        or _dry_trap(folded)
+        or _damp_mark(folded)
+        or _soft_electrical(folded)
+    ):
+        return guessed
+    return opinion
 
 
 def _extreme_temperature(text: str) -> bool:
@@ -931,11 +1231,17 @@ def _stricter(left: tuple[str, str | None], right: tuple[str, str | None]) -> tu
 
 
 def _warm_semantic() -> None:
-    """Load the embedder at import so the first caller turn is not the download."""
+    """Load the embedder and the NLI model so the first caller turn is not the load."""
     try:
         from app.agent.hazard_semantic import semantic_hazard
 
         semantic_hazard("warm the multilingual hazard embedder")
+    except Exception:
+        pass
+    try:
+        from app.agent.hazard_nli import nli_opinion
+
+        nli_opinion("warm the offline safety classifier")
     except Exception:
         return
 

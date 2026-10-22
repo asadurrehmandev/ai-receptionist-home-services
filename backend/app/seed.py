@@ -84,10 +84,11 @@ SEED_SCRIPTS: list[dict] = [
 
 def seed_demo(service) -> list[dict]:
     """Seed the board. A missing hazard model must not stop the process."""
+    from app.agent.hazard_nli import nli_ready
     from app.agent.hazard_semantic import semantic_ready
 
-    if not semantic_ready():
-        logger.warning("Hazard model is not loaded. Skipping demo seed.")
+    if not semantic_ready() or not nli_ready():
+        logger.warning("A safety model is not loaded. Skipping demo seed.")
         return []
     results = []
     for script in SEED_SCRIPTS:

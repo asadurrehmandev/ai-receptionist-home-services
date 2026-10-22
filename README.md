@@ -66,7 +66,7 @@ Two brains share one calendar. The caller never hears a fact the server did not 
 
 **Rules.** The default, and the only brain when `ANTHROPIC_API_KEY` is empty. It owns the greeting, the questions, the offers, and the booking.
 
-**Hazards.** Concept rules run first. Beside them, `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (fastembed 0.6.1, 384-d, mean pooling) scores the utterance against about 40 hazard prototypes and about 40 routine near-misses for gas, carbon monoxide, water, electrical, and unsafe indoor temperature. The trigram layer is gone. The weights are downloaded at image build into `FASTEMBED_CACHE_PATH` and are not committed. At runtime the loader uses `local_files_only=True` when those weights are already on disk, or when `HF_HUB_OFFLINE=1`. A failed load is remembered and not retried. This is not an NLI model and not mDeBERTa. A definite needs both a cosine and a margin over the routine prototypes. A finished repair stays a routine call. A smell, a leak, or another hazard in the same breath still pages. "Just asking" and "how fast in an emergency" do not page. Water moving from a ceiling or an appliance, sewage coming back through a drain, a detector that is shrieking or showing a high number, and a scorched or too-hot surface page even when the caller never uses the textbook word. An explicit "no sparks" or a green "just test it" light does not page. A damp spot, a faint odor, or a slightly warm outlet asks "Is anyone in danger right now?" instead of booking or paging. No heat or no cooling is urgent together with an older adult, an infant, oxygen, or an extreme indoor temperature, including a bare number after "it's" or "inside". A bare "the AC is not cooling" stays a routine booking. Fee questions, an emergency fund, stove conversions, and a car out of gas do not page. If the embedder cannot load, an uncertain turn asks that safety question instead of returning "no hazard," and `/api/health` returns 503 with `semantic_ready: false`. Claude's hazard opinion can raise an existing ask to a definite hazard concept. It cannot page a sales call. Gas or carbon monoxide advice stops at leaving the house and calling 911 or the gas company. A no-heat emergency tells the caller to keep a vulnerable person warm or cool and to call 911 if someone is unwell. There is no DIY relight or battery-swap instruction.
+**Hazards.** Concept rules run first. Beside them, `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (fastembed 0.6.1, 384-d, mean pooling) scores the utterance against about 40 hazard prototypes and about 40 routine near-misses for gas, carbon monoxide, water, electrical, and unsafe indoor temperature. The trigram layer is gone. The weights are downloaded at image build into `FASTEMBED_CACHE_PATH` and are not committed. At runtime the loader uses `local_files_only=True` when those weights are already on disk, or when `HF_HUB_OFFLINE=1`. A failed load is remembered and not retried. A definite needs both a cosine and a margin over the routine prototypes. Beside the embedder, `MoritzLaurer/deberta-v3-xsmall-zeroshot-v1.1-all-33` runs offline on ONNX Runtime and scores the full turn against "an immediate safety risk to people or property," unpacked into a few labels (a sick person, an infant without heat, flooding, a gas smell, an engine in a garage, fire or sparks). The weights are downloaded into `FASTEMBED_CACHE_PATH/nli` at image build and are not committed. A high entailment score can raise a safety question to a page. It does not turn a routine clearance into a page. On this CPU a short turn scores in about 37 ms after warmup, under the 300 ms budget. If those weights are missing, `/api/health` is 503 with `nli_ready: false` and seeding is skipped. A finished repair stays a routine call. A smell, a leak, or another hazard in the same breath still pages. "Just asking" and "how fast in an emergency" do not page. Water moving from a ceiling or an appliance, sewage coming back through a drain, a detector that is shrieking or showing a high number, and a scorched or too-hot surface page even when the caller never uses the textbook word. An explicit "no sparks" or a green "just test it" light does not page. A damp spot, a faint odor, or a slightly warm outlet asks "Is anyone in danger right now?" instead of booking or paging. No heat or no cooling is urgent together with an older adult, an infant, oxygen, or an extreme indoor temperature, including a bare number after "it's" or "inside". A bare "the AC is not cooling" stays a routine booking. Fee questions, an emergency fund, stove conversions, and a car out of gas do not page. If the embedder cannot load, an uncertain turn asks that safety question instead of returning "no hazard," and `/api/health` returns 503 with `semantic_ready: false`. Claude's hazard opinion can raise an existing ask to a definite hazard concept. It cannot page a sales call. Gas or carbon monoxide advice stops at leaving the house and calling 911 or the gas company. A no-heat emergency tells the caller to keep a vulnerable person warm or cool and to call 911 if someone is unwell. There is no DIY relight or battery-swap instruction.
 
 **Languages.** Booking is English only. Spanish and other languages get a hazard check first. A definite hazard still transfers. Anything else is a callback to a person, and Riley says so. The desk does not pretend to finish a Spanish booking.
 
@@ -78,7 +78,7 @@ Each model call is capped at 5 seconds. The whole turn gives up at 8 seconds or 
 
 Without voice keys, Twilio uses its own speech recognition and a spoken reply (`<Gather>` / `<Say>`). Three silent results hang up and ask the caller to call back. Emergencies return `<Dial>` with a 20-second timeout. If a second on-call number is set in the YAML, a no-answer tries that number once. If nobody answers, Riley gives guidance for the hazard on the call: leave and call 911 or the gas company, get everyone into fresh air for carbon monoxide, shut the main valve if it is safe for water, stay back and call 911 if there is smoke or fire for electrical, or keep a vulnerable person warm or cool and call 911 if they are unwell when the hazard is heat or cold. The missed transfer is saved as a lead with status `missed_transfer` and a `call.transfer_missed` webhook, and it sits at the top of the board with a red badge. In demo mode Riley says the office will call back when the on-call text was sent or the webhook was accepted, including a mock delivery, because the board is showing the alert. With `DEMO_MODE=0`, a mock webhook is not a promise: Riley says the call was logged for the office and to call 911 if anyone is in danger, unless SMS was sent or the webhook status is `delivered`. If Twilio SMS did not accept the page, Riley says no text was sent. Riley does not tell the caller to dial this shop number again. Gather is the path that actually dials. Media Streams turn on only when `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, and `TWILIO_AUTH_TOKEN` are all set. Without the account SID there is no way to speak a fallback, so the call stays on Gather. The stream URL has no token. TwiML passes a one-time HMAC in `<Parameter name="token">`, and the socket reads it from the start message `customParameters`. A replay is rejected. `DEMO_MODE=0` rejects a start message with no token. A speech or TTS error updates the live call with `<Say>` and `<Redirect>` back to Gather so intake continues. If that turn is already an emergency, the update is `<Dial>`, not `<Hangup>`. The stream flushes a turn on trailing silence. Until those keys exist, Gather remains the answering path.
 
-`DEMO_MODE=0` will not start a call without `TWILIO_AUTH_TOKEN`. Voice webhooks and the media-stream socket return 503, `/api/health` sets `voice_ready` false and explains why, and an empty token does not make an unsigned webhook valid. The process itself stays up so the board can still sign in. Demo mode still accepts unsigned local requests. `/api/health` also reports `semantic_ready`. Compose treats a 503 as unhealthy, so a container whose hazard weights did not load does not go green. With the weights baked into the image and `HF_HUB_OFFLINE=1`, compose is healthy with no network. If the weights are missing or corrupt, seeding is skipped and the process still starts. `/api/health` returns 503 with `semantic_ready` false. That is true with the default `SEED_ON_START=1`. In that degraded mode a gas smell still pages, and an ordinary drain call is not paged after the address.
+`DEMO_MODE=0` will not start a call without `TWILIO_AUTH_TOKEN`. Voice webhooks and the media-stream socket return 503, `/api/health` sets `voice_ready` false and explains why, and an empty token does not make an unsigned webhook valid. The process itself stays up so the board can still sign in. Demo mode still accepts unsigned local requests. `/api/health` reports `semantic_ready` and `nli_ready`. `ok` is true only when both models loaded. Compose treats a 503 as unhealthy, so a container whose hazard weights did not load does not go green. With the weights baked into the image and `HF_HUB_OFFLINE=1`, compose is healthy with no network. If either model is missing or corrupt, seeding is skipped and the process still starts. `/api/health` returns 503. That is true with the default `SEED_ON_START=1`. In that degraded mode a gas smell still pages, and an ordinary drain call is not paged after the address.
 
 ## What was measured
 
@@ -128,7 +128,7 @@ That second score is this desk's own set. It is not a claim about any private ca
 | Routine lines kept routine | 36 / 36 |
 | Routine false pages | 0 / 36 |
 
-The safety-question miss on that development file is "Possibly a gas smell, or maybe it is just the trash." A test locks the behavior that a gas smell pages, including when the caller hedges. A test also locks that an after-hours rate question does not page.
+The safety-question miss on that development file is "Possibly a gas smell, or maybe it is just the trash." A test locks the behavior that a gas smell pages, including when the caller hedges. One unit test covers one after-hours rate sentence. That test does not prove that rate questions in general stay off the on-call line.
 
 `python -m evals.unseen` scores `evals/unseen_set.py`, 58 lines written and scored before the round-6 class rules, then left unchanged. The first score is the held-out number. The second score is the same file after the rules. It is not an external review.
 
@@ -150,9 +150,29 @@ The safety-question miss on that development file is "Possibly a gas smell, or m
 | Routine lines kept routine | 18 / 18 |
 | Routine false pages | 0 / 18 |
 
-An external review of the previous build measured about two-thirds strict recall on its own unseen English paraphrases. This repo does not re-run that list. 36/36 above is not that number.
+An external review of an earlier build measured about two-thirds strict recall on its own unseen English paraphrases. A later sealed review of the previous commit measured about 74% strict recall. This repo does not re-run those lists. 36/36 above is not either number.
 
-Tests, not the tables, are what the desk claims: a gas smell pages, a fee or after-hours rate question does not, a date past the booking horizon is named and is not booked as today, and a missing hazard model returns 503 with `semantic_ready` false while `SEED_ON_START` stays on. The private caller list was not copied and was not re-run. Live Claude was not called.
+`python -m evals.round7` scores `evals/round7_set.py`, 59 lines written and scored before the round-7 changes, then left unchanged. The first score is the held-out number. The second score is the same file after the rules and the zero-shot model. It is not an external review, and it is not a sealed caller list.
+
+| | Held-out, before the round-7 changes |
+| --- | ---: |
+| Lines | 59 |
+| Emergency recall | 18 / 35 |
+| Safety-question lines | 4 / 4 |
+| Routine lines kept routine | 17 / 20 |
+| Routine false pages | 1 / 20 |
+
+| | Same file, after the round-7 changes |
+| --- | ---: |
+| Lines | 59 |
+| Emergency recall | 35 / 35 |
+| Safety-question lines | 4 / 4 |
+| Routine lines kept routine | 20 / 20 |
+| Routine false pages | 0 / 20 |
+
+The safety question is asymmetric. Only a clean "no," "nobody," or "not an emergency," with no danger content anywhere in the utterance, skips paging. A symptom, injury, worsening, hedge, "wait," "hurry," tentative yes, or any unclear answer pages on-call. A request for a person, with no danger content, is a warm transfer to the office, not an on-call page. The check runs over the whole utterance, including the part after a "no." That extra page happens only after the caller has been asked the safety question. A past repair or a hypothetical price question does not page unless a present hazard is in the same breath. If the caller is unsure, the desk asks. It does not page on the unsure wording alone. A spigot, a pressure complaint, or an install books without making the caller deny an emergency.
+
+A gas smell pages, including when the caller hedges. A date past the booking horizon is named and is not booked as today. A missing hazard model returns 503 with `semantic_ready` false, and a missing zero-shot model returns 503 with `nli_ready` false, while `SEED_ON_START` stays on. The private caller list was not copied and was not re-run. Live Claude was not called.
 
 Live Claude was not called. There is no live tool-mode column. `follow_rules` is not in `TOOL_SPECS`.
 
@@ -160,7 +180,7 @@ Live Claude was not called. There is no live tool-mode column. `follow_rules` is
 
 Scripted guard tests, still without a live model, drop free-form text (a made-up afternoon, a made-up price, a discount, a "booked" claim). A cooperative script books only across two turns: the caller states the name, phone, and address and picks a window, then says yes to the read-back. An invented name or phone is not stored. "No" and a hedge do not book. An invented slot does not. A model-initiated `transfer` or `classify_hazard` on a faucet quote does not page. Cancel verification is stored on the booking. Three failures lock that booking, text the number on it when SMS is actually sent, and do not page on-call or read the emergency script. A later call with the right day is still refused. Separate tests cover accented names, Suite versus Apt, "ends in" and "at the end" phone corrections, a house-number correction read back at the offer, "ten-thirty," "the Tuesday after next," "afternoon except Friday," a date past the horizon, "first Monday in November," Halloween morning, "next week except Monday," and "half past" / "4ish."
 
-Pytest collects 184 tests. None of them call Anthropic.
+Pytest collects 191 tests. None of them call Anthropic.
 
 ## Screenshots
 
@@ -241,7 +261,7 @@ Environment variables are listed in `.env.example`. None are required for the lo
 
 ## Project layout
 
-- `backend/app/agent` — hazard concepts, MiniLM margin scorer, template speech, calendar, rules engine, and the tool dialog
+- `backend/app/agent` — hazard concepts, MiniLM margin scorer, offline zero-shot NLI, template speech, calendar, rules engine, and the tool dialog
 - `backend/app/llm` — Claude client and the scripted stand-in used in tests
 - `backend/app/voice` — Twilio signature check, Gather, dial fallback, single-use stream token
 - `backend/app/integrations.py` — Deepgram, ElevenLabs, Twilio SMS, and the signed CRM POST
@@ -249,6 +269,7 @@ Environment variables are listed in `.env.example`. None are required for the lo
 - `evals/fresh_set.py` — the frozen 112 lines written for this desk before tuning
 - `evals/heldout_set.py` — 97 lines. 28/48 is the held-out score. 48/48 is the development score after the rules
 - `evals/unseen_set.py` — 58 lines written before the round-6 rules. 17/36 was the held-out score
+- `evals/round7_set.py` — 59 lines written before the round-7 changes. 18/35 was the held-out score. 35/35 is the same file after those changes
 - `evals/live_claude.py` — opt-in live probe
 - `frontend` — dispatch board and call simulator
 - `config/business.yaml` — the sample plumbing and HVAC shop

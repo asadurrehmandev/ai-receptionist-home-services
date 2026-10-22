@@ -78,8 +78,10 @@ STREET_SUFFIX = (
     r"Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Way|Court|Ct|"
     r"Place|Pl|Circle|Cir|Trail|Trl|Parkway|Pkwy|Plaza|Loop|Pass|Cove|Path|Highway|Hwy|FM|RR"
 )
+# A single letter or digit after the suffix stays in the street ("Avenue B").
+# One character plus a word boundary, so "Street Suite" does not swallow Suite.
 STREET = re.compile(
-    rf"\b(\d{{1,6}}\s+(?:[A-Za-z0-9.'#-]+\s+){{0,6}}(?:{STREET_SUFFIX}))\b",
+    rf"\b(\d{{1,6}}\s+(?:[A-Za-z0-9.'#-]+\s+){{0,6}}(?:{STREET_SUFFIX})(?:\s+[A-Za-z0-9])?)\b",
     re.I,
 )
 
@@ -93,6 +95,8 @@ ISSUE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("furnace", "no heat", "not heating"), "Heating repair"),
     (("sewer", "sewage"), "Sewer line"),
     (("leak",), "Leak"),
+    (("spigot", "hose bib", "hose bibb", "sillcock", "outdoor faucet"), "Outdoor faucet"),
+    (("water pressure", "low pressure", "shower pressure"), "Water pressure"),
 )
 
 NAME_STOP = {
@@ -274,7 +278,8 @@ def detect_intent(text: str) -> str:
     if SERVICE_PROBLEM.search(norm) or re.search(
         r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it|"
         r"install\w*|hook\s?up|hookup|thermostat|no power|dead outlet|outlet (?:is )?dead|puddle|dripp\w*|"
-        r"chilly|cold room|breaker tripped|tripped (?:the )?breaker|blank screen|tune[- ]?up)\b",
+        r"chilly|cold room|breaker tripped|tripped (?:the )?breaker|blank screen|tune[- ]?up|"
+        r"spigots?|hose bibs?|bibbs?|sillcocks?|water pressure|low pressure|shower pressure)\b",
         norm,
     ):
         return "new_job"
@@ -370,6 +375,120 @@ def is_garbled(text: str) -> bool:
     if not words:
         return True
     return len(words) == 1 and len(words[0]) <= 2
+
+
+_CLAUSE_SPLIT = re.compile(r"\b(?:but|except|actually|however|though|although)\b|[,;]|—|–", re.I)
+_HARM = re.compile(
+    r"\b("
+    r"dizz\w*|lightheaded|faint(?:ed|ing)?|passed out|collapsed|"
+    r"can(?:not|'t) breathe|trouble breathing|wheez\w*|asthma|"
+    r"throwing up|vomit\w*|nause\w*|confused|hard to wake|won'?t wake|unresponsive|"
+    r"headaches?|chest pain|burns?|burned|burning|"
+    r"hurt|injured|injur\w*|bleeding|unconscious|sick|"
+    r"fell|fallen|can(?:not|'t) get up|"
+    r"smoke|smoking|fire|flames?|sparks?|"
+    r"getting worse|spreading|coming faster|"
+    r"danger|emergency|unsafe"
+    r")\b",
+    re.I,
+)
+_HEDGE_OR_URGENCY = re.compile(
+    r"\b("
+    r"i think so|maybe|possibly|probably|kind of|sort of|uh huh|mm-?hmm|i guess|"
+    r"not sure|unsure|hurry|quick|help|wait"
+    r")\b",
+    re.I,
+)
+_CLEAR_PHRASE = re.compile(
+    r"\b(?:"
+    r"nobody(?:'s| is) (?:in danger|hurt|injured)|"
+    r"no one is (?:hurt|injured|in danger|unsafe)|"
+    r"nothing is unsafe|"
+    r"(?:this |that |it )?is not an emergency|not an emergency|no emergency|"
+    r"we(?:'re| are) (?:fine|ok|okay|safe)|"
+    r"we aren'?t in danger|we are not in danger|"
+    r"everyone(?:'s| is) (?:fine|ok|okay|safe)|"
+    r"everybody(?:'s| is) (?:fine|ok|okay|safe)"
+    r")\b",
+    re.I,
+)
+_CLEAR_FILLER = re.compile(
+    r"\b(i|we|this|that|it|is|are|a|an|the|please|thanks|thank|you|and|just|really|"
+    r"right|now|no|nope|nah|not|nobody|nothing|none|one|in|an)\b",
+    re.I,
+)
+_BARE_NO = re.compile(r"^(?:no|nope|nah|no thanks|no thank you)$", re.I)
+_NEGATION_TOKEN = {
+    "no",
+    "not",
+    "nobody",
+    "nobodys",
+    "nothing",
+    "none",
+    "isnt",
+    "arent",
+    "without",
+    "dont",
+    "never",
+    "nope",
+    "nah",
+    "noone",
+}
+
+
+def _harm_in_clause(clause: str) -> bool:
+    for match in _HARM.finditer(clause):
+        window = clause[max(0, match.start() - 48) : match.start()]
+        tokens = [token.replace("'", "") for token in re.findall(r"[a-z']+", window.lower())]
+        tail = tokens[-5:]
+        if "no" in tail and "one" in tail:
+            continue
+        if any(token in _NEGATION_TOKEN for token in tail):
+            continue
+        return True
+    return False
+
+
+def reports_harm(text: str) -> bool:
+    """True when any clause, including one after a leading no, states harm."""
+    for clause in _CLAUSE_SPLIT.split(text or ""):
+        if clause.strip() and _harm_in_clause(clause):
+            return True
+    return False
+
+
+def _explicit_clear(text: str) -> bool:
+    raw = " ".join((text or "").replace("'", "'").split())
+    folded = re.sub(r"[^a-z']+", " ", raw.lower()).strip()
+    if _BARE_NO.fullmatch(folded):
+        return True
+    if not _CLEAR_PHRASE.search(raw):
+        return False
+    leftover = _CLEAR_PHRASE.sub(" ", raw)
+    leftover = _CLEAR_FILLER.sub(" ", leftover)
+    return not re.findall(r"[a-z]{3,}", leftover.lower())
+
+
+def safety_decision(text: str) -> str:
+    """How to treat an answer to the safety question.
+
+    'clear' continues (or, on the unclear path, an office callback).
+    'callback' is a warm transfer with no on-call page.
+    'page' connects on-call. Only a clean no with no danger content is clear.
+    Anything else, including a hedge, a hurry, or an unclear answer, pages.
+    """
+    raw = text or ""
+    if reports_harm(raw):
+        return "page"
+    if _HEDGE_OR_URGENCY.search(raw):
+        return "page"
+    if _explicit_clear(raw):
+        return "clear"
+    if is_yes(raw):
+        return "page"
+    if wants_callback(raw):
+        return "callback"
+    return "page"
 
 
 def wants_cancel(text: str) -> bool:
