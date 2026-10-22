@@ -1,17 +1,16 @@
-import { Mic, Send } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Check, Mic, Send } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
-import { KeySettings } from "@/components/KeySettings";
-import { ModeBadge } from "@/components/ModeBadge";
+import { LiveMark } from "@/components/CallerName";
 import { ErrorState } from "@/components/States";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { api, type DemoTurn } from "@/lib/api";
 import { formatMs, formatPhone } from "@/lib/format";
 import { SCRIPTS } from "@/lib/scripts";
-import { getSession, isLive } from "@/lib/sessionKey";
+import { getSession, isLive, subscribe } from "@/lib/sessionKey";
+import { cn } from "@/lib/utils";
 
 type Bubble = {
   role: "agent" | "caller";
@@ -36,8 +35,13 @@ const PHASE_LABEL: Record<string, string> = {
   closed: "Call ended",
 };
 
-function speak(text: string, onStart: () => void, onEnd: () => void) {
-  if (!window.speechSynthesis) return;
+const DANGER = new Set(["gas", "burst"]);
+
+function speak(text: string, muted: () => boolean, onStart: () => void, onEnd: () => void) {
+  if (muted() || !window.speechSynthesis) {
+    onEnd();
+    return;
+  }
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 1.02;
@@ -48,6 +52,7 @@ function speak(text: string, onStart: () => void, onEnd: () => void) {
 }
 
 export function Simulator() {
+  const session = useSyncExternalStore(subscribe, getSession, getSession);
   const [callId, setCallId] = useState<string | null>(null);
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [draft, setDraft] = useState("");
@@ -59,8 +64,17 @@ export function Simulator() {
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [speechNote, setSpeechNote] = useState<string | null>(null);
+  const [ended, setEnded] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [showTimings, setShowTimings] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [pinned, setPinned] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
+  const mutedRef = useRef(false);
+  const prevFields = useRef<Record<string, string>>({});
   const script = SCRIPTS.find((item) => item.id === scriptId) || SCRIPTS[0];
 
   async function typeReply(text: string, latency?: number | null) {
@@ -92,11 +106,12 @@ export function Simulator() {
       if (last?.role === "agent") next[next.length - 1] = { role: "agent", text, streaming: false, latency_ms: latency };
       return next;
     });
-    speak(text, () => setSpeaking(true), () => setSpeaking(false));
+    speak(text, () => mutedRef.current, () => setSpeaking(true), () => setSpeaking(false));
   }
 
   async function begin() {
     generation.current += 1;
+    window.speechSynthesis?.cancel();
     const started = await api.startCall();
     setCallId(started.id);
     setBubbles([]);
@@ -104,6 +119,9 @@ export function Simulator() {
     setEvents([]);
     setCursor(0);
     setError(null);
+    setEnded(false);
+    setStartedAt(Date.now());
+    setElapsed(0);
     await typeReply(started.say, started.latency_ms);
     return started;
   }
@@ -114,12 +132,32 @@ export function Simulator() {
   }, []);
 
   useEffect(() => {
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
-  }, [bubbles, speaking]);
+    if (!startedAt || ended) return;
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [startedAt, ended]);
+
+  useEffect(() => {
+    const node = scroller.current;
+    if (!node || !pinned) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    node.scrollTo({ top: node.scrollHeight, behavior: reduce ? "auto" : "smooth" });
+  }, [bubbles, events, pinned]);
+
+  useEffect(() => {
+    const next = fieldMap(turn);
+    const previous = prevFields.current;
+    const changed = Object.keys(next).find((key) => next[key] && next[key] !== previous[key]);
+    prevFields.current = next;
+    if (!changed) return;
+    setFlash(changed);
+    const timer = window.setTimeout(() => setFlash(null), 400);
+    return () => window.clearTimeout(timer);
+  }, [turn]);
 
   async function send(text: string, activeId = callId) {
     const trimmed = text.trim();
-    if (!activeId || !trimmed) return null;
+    if (!activeId || !trimmed || ended) return null;
     setBubbles((current) => [...current, { role: "caller", text: trimmed }]);
     const result = await api.sendTurn(activeId, trimmed);
     setTurn(result);
@@ -130,7 +168,7 @@ export function Simulator() {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (busy || !draft.trim()) return;
+    if (busy || ended || !draft.trim()) return;
     setBusy(true);
     try {
       await send(draft);
@@ -165,7 +203,7 @@ export function Simulator() {
   }
 
   async function step() {
-    if (busy || cursor >= script.turns.length) return;
+    if (busy || ended || cursor >= script.turns.length) return;
     setBusy(true);
     try {
       await send(script.turns[cursor]);
@@ -191,206 +229,278 @@ export function Simulator() {
     };
     recognition.onerror = () => setSpeechNote("The microphone didn't start. Type the caller's line instead.");
     recognition.start();
-    setSpeechNote("Listening… speak as the caller, then press send.");
+    setSpeechNote("Listening. Speak as the caller, then press send.");
+  }
+
+  function toggleMute() {
+    mutedRef.current = !mutedRef.current;
+    setMuted(mutedRef.current);
+    if (mutedRef.current) {
+      window.speechSynthesis?.cancel();
+      setSpeaking(false);
+    }
+  }
+
+  function endCall() {
+    generation.current += 1;
+    window.speechSynthesis?.cancel();
+    setSpeaking(false);
+    setBusy(false);
+    setEnded(true);
   }
 
   if (error && bubbles.length === 0) return <ErrorState message={error} onRetry={() => begin()} />;
 
   const slots = turn?.slots;
+  const fields = [
+    { id: "intent", label: "Intent", value: turn?.intent?.replaceAll("_", " ") || "" },
+    { id: "issue", label: "Issue", value: slots?.issue || "" },
+    { id: "name", label: "Name", value: slots?.name || "" },
+    { id: "phone", label: "Phone", value: slots?.phone ? formatPhone(slots.phone) : "", mono: true },
+    { id: "address", label: "Address", value: slots?.address || "" },
+  ];
+  const captured = fields.filter((field) => field.value && field.value !== "–").length;
   const sms = [...events].reverse().find((event) => event.type === "sms");
-  const transfer = [...events].reverse().find((event) => event.type === "transfer");
   const smsPayload = sms?.payload as { body?: string; delivery?: string } | undefined;
-  const smsBody = smsPayload?.body;
   const smsSent = smsPayload?.delivery === "sent";
-  const transferTo = transfer?.payload as { to_name?: string; to_phone?: string; reason?: string } | undefined;
+  const nextLine = cursor < script.turns.length ? script.turns[cursor] : "";
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">No Twilio account required</p>
-          <h1 className="mt-1 font-display text-4xl">Call simulator</h1>
-          <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-            Talk with the browser’s microphone or type as the homeowner. With no key, Riley answers from the shop
-            rules. Paste a key in the session settings and the same rules still run first; the model can only add a
-            tool call. A time, a price, or a transfer still has to match the server.
-          </p>
+    <div className="grid items-start gap-4 xl:grid-cols-[260px_minmax(0,1fr)_320px]">
+      <aside aria-label="Scenarios" className="order-2 xl:order-none">
+        <div className="space-y-1" role="radiogroup" aria-label="Caller scenarios">
+          {SCRIPTS.map((item) => {
+            const selected = item.id === scriptId;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => {
+                  setScriptId(item.id);
+                  setCursor(0);
+                }}
+                className={cn(
+                  "block w-full rounded-md px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  selected ? "bg-primary-soft shadow-[inset_2px_0_0_hsl(var(--primary))]" : "hover:bg-muted",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{item.label}</span>
+                  {DANGER.has(item.id) && <Badge tone="escalated">Emergency</Badge>}
+                </div>
+                <div className="text-xs text-muted-foreground">{item.detail}</div>
+              </button>
+            );
+          })}
         </div>
-        <KeySettings label="Session key" />
-      </header>
-      {getSession().note && (
-        <p className="rounded-md border border-[#e6d3a4] bg-[#f8ecd9] px-3 py-2 text-sm text-[#6b4a10]">{getSession().note}</p>
-      )}
+        <div className="mt-3">
+          <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || ended || !callId || cursor >= script.turns.length}>
+            Step
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Next line: {nextLine || "Scenario finished."}
+        </p>
+      </aside>
 
-      <div className="grid items-start gap-4 xl:grid-cols-[240px_minmax(320px,420px)_minmax(260px,1fr)]">
-        <aside className="space-y-2">
-          <h2 className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Scenarios</h2>
-          {SCRIPTS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                setScriptId(item.id);
-                setCursor(0);
-              }}
-              className={`block w-full rounded-md border px-3 py-2 text-left ${
-                item.id === scriptId ? "border-copper bg-[#f8f1ea]" : "border-border bg-card"
-              }`}
-            >
-              <div className="text-sm font-medium">{item.label}</div>
-              <div className="text-xs text-muted-foreground">{item.detail}</div>
-            </button>
-          ))}
-          <div className="flex gap-2 pt-2">
-            <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || !callId || cursor >= script.turns.length}>
+      <section aria-label="Live call" className="order-1 flex h-[min(640px,calc(100dvh-7rem))] min-h-[420px] flex-col rounded-lg border border-border bg-card xl:order-none xl:h-auto xl:min-h-[560px]">
+        <div className="flex flex-col gap-2 border-b border-border px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {ended ? <span className="text-sm text-muted-foreground">Ended</span> : <LiveMark />}
+            <span className="font-mono text-xs tabular-nums text-subtle">{formatElapsed(elapsed)}</span>
+            <span className="truncate text-sm font-medium">Northline Plumbing</span>
+            <span className="text-xs text-subtle">{PHASE_LABEL[turn?.phase || "discover"] || turn?.phase}</span>
+            {speaking && <span className="text-xs text-muted-foreground">Speaking</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            <Button type="button" size="sm" variant="outline" aria-pressed={muted} onClick={toggleMute}>
+              {muted ? "Unmute" : "Mute"}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={endCall} disabled={ended}>
+              End
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || ended || !callId || cursor >= script.turns.length}>
               Step
             </Button>
             <Button type="button" size="sm" onClick={playThrough} disabled={busy}>
               Play through
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Next line: {cursor < script.turns.length ? script.turns[cursor] : "Scenario finished."}
-          </p>
-        </aside>
-
-        <div className="phone-bezel">
-          <div className="phone-screen">
-            <div className="flex items-center justify-between border-b border-[#e6dfd4] px-4 py-3">
-              <div>
-                <ModeBadge compact />
-                <div className="text-sm font-medium">Northline Plumbing</div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-muted-foreground">{PHASE_LABEL[turn?.phase || "discover"] || turn?.phase}</div>
-                {speaking ? (
-                  <div className="wave ml-auto mt-1" aria-hidden>
-                    <span /><span /><span /><span />
-                  </div>
-                ) : (
-                  <div className="text-[11px] text-muted-foreground">{speaking ? "" : "Speaker idle"}</div>
+        </div>
+        <div
+          ref={scroller}
+          className="relative flex-1 space-y-3 overflow-y-auto px-4 py-4"
+          aria-live="polite"
+          onScroll={() => {
+            const node = scroller.current;
+            if (!node) return;
+            setPinned(node.scrollHeight - node.scrollTop - node.clientHeight < 48);
+          }}
+        >
+          {bubbles.map((bubble, index) => (
+            <div key={`${bubble.role}-${index}`} className={bubble.role === "caller" ? "ml-12" : "mr-12"}>
+              <div className="mb-1 flex items-baseline justify-between text-xs text-subtle">
+                <span>{bubble.role === "caller" ? "Caller" : "Riley"}</span>
+                {showTimings && !bubble.thinking && bubble.latency_ms != null && (
+                  <span className="font-mono tabular-nums" title="Rule engine response time (demo)">
+                    {formatMs(bubble.latency_ms)}
+                  </span>
                 )}
               </div>
+              <p
+                className={cn(
+                  "rounded-lg px-3 py-2 text-base",
+                  bubble.role === "caller" ? "bg-muted" : "border border-border bg-background",
+                  bubble.thinking && "text-muted-foreground",
+                )}
+              >
+                {bubble.text}
+                {bubble.streaming && <span className="caret" aria-hidden />}
+              </p>
             </div>
-            {turn?.outcome === "booked" && (
-              <div className="bg-[#e5f2ea] px-4 py-2 text-sm text-[#1f6a45]">
-                {smsSent ? "Booked. A confirmation text was sent." : "Booked. The visit is on the board. No text was sent."}
-              </div>
-            )}
-            {turn?.outcome === "escalated" && (
-              <div className="bg-[#f8e4e1] px-4 py-2 text-sm text-[#9d2c2c]">
-                Transferred to {transferTo?.to_name || "on-call"}.
-              </div>
-            )}
-            {turn?.outcome === "spam" && (
-              <div className="bg-[#f8ecd9] px-4 py-2 text-sm text-[#8a5a12]">Closed as a sales call.</div>
-            )}
-            <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-4 py-4" aria-live="polite">
-              {bubbles.map((bubble, index) => (
-                <div key={`${bubble.role}-${index}`} className={bubble.role === "caller" ? "ml-8" : "mr-8"}>
-                  <div className="text-[10px] uppercase tracking-wide text-[#8a8175]">
-                    {bubble.role === "caller" ? "Caller" : bubble.thinking ? "Riley" : "Riley"}
-                    {!bubble.thinking && bubble.latency_ms != null ? ` · ${formatMs(bubble.latency_ms)}` : ""}
-                  </div>
-                  <p
-                    className={`mt-1 rounded-2xl px-3 py-2 text-sm leading-6 ${
-                      bubble.role === "caller"
-                        ? "bg-[#1c1915] text-[#f4efe6]"
-                        : bubble.thinking
-                          ? "bg-white text-[#8a8175]"
-                          : "bg-white"
-                    }`}
-                  >
-                    {bubble.text}
-                    {bubble.streaming && <span className="caret" aria-hidden />}
-                  </p>
-                </div>
-              ))}
-            </div>
-            <form onSubmit={onSubmit} className="flex gap-2 border-t border-[#e6dfd4] p-3">
-              <Input
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="What the caller says"
-                aria-label="Caller line"
-                disabled={busy}
-              />
-              <Button type="button" size="icon" variant="outline" onClick={listen} aria-label="Speak as the caller">
-                <Mic className="h-4 w-4" />
-              </Button>
-              <Button type="submit" size="icon" disabled={busy || !draft.trim()} aria-label="Send caller line">
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
-            {speechNote && <p className="px-3 pb-3 text-xs text-muted-foreground">{speechNote}</p>}
-          </div>
+          ))}
+          {events.map((event, index) => (
+            <details key={`${event.type}-${index}`} className="rounded-md border border-border px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium">
+                <span className="inline-flex items-center gap-1">
+                  Tool call: {event.type.replaceAll("_", " ")}
+                  <Check className="h-3.5 w-3.5 text-success" aria-hidden />
+                </span>
+              </summary>
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs leading-5 text-muted-foreground">
+                {JSON.stringify(event.payload, null, 2)}
+              </pre>
+            </details>
+          ))}
+          {!pinned && (
+            <button
+              type="button"
+              className="sticky bottom-2 left-1/2 -translate-x-1/2 rounded-md border border-border bg-card px-2 py-1 text-xs shadow-composer dark:shadow-none"
+              onClick={() => {
+                setPinned(true);
+                scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
+              }}
+            >
+              Jump to latest
+            </button>
+          )}
         </div>
-
-        <aside className="space-y-3">
-          <div className="rounded-lg border border-border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-display text-2xl">Ticket</h2>
-              {turn?.outcome && <Badge tone={turn.outcome}>{turn.outcome}</Badge>}
-            </div>
-            <dl className="mt-3 space-y-2 text-sm">
-              <Row label="Intent" value={turn?.intent?.replaceAll("_", " ") || "—"} />
-              <Row label="Issue" value={slots?.issue || "—"} />
-              <Row label="Name" value={slots?.name || "—"} />
-              <Row label="Phone" value={formatPhone(slots?.phone)} />
-              <Row label="Address" value={slots?.address || "—"} />
-            </dl>
-            {turn && turn.offered.length > 0 && (
-              <div className="mt-3 border-t border-border pt-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">Offered</div>
-                <ul className="mt-1 space-y-1 text-sm">
-                  {turn.offered.map((slot) => (
-                    <li key={slot}>{slot}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+        <form onSubmit={onSubmit} className="border-t border-border p-3">
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-background p-2 shadow-composer dark:shadow-none">
+            <Input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={ended ? "Call ended" : "What the caller says"}
+              aria-label="Caller line"
+              disabled={busy || ended}
+              className="border-0 bg-transparent shadow-none focus-visible:ring-offset-0"
+            />
+            <Button type="button" size="icon" variant="ghost" onClick={listen} aria-label="Speak as the caller" disabled={ended}>
+              <Mic className="h-4 w-4" />
+            </Button>
+            <Button type="submit" size="icon" variant="outline" disabled={busy || ended || !draft.trim()} aria-label="Send caller line">
+              <Send className="h-4 w-4" />
+            </Button>
           </div>
-          {turn?.outcome === "booked" && smsBody && (
-            <div className="rounded-lg border border-[#cfe3d6] bg-[#f3faf5] p-4">
-              <div className="text-xs uppercase tracking-[0.14em] text-[#1f6a45]">
-                {smsSent ? "Confirmation text" : "Text drafted, not sent"}
-              </div>
-              <p className="mt-2 text-sm leading-6">{smsBody}</p>
+          <p className="mt-1 text-xs text-subtle">Enter to send</p>
+          {speechNote && <p className="mt-1 text-xs text-muted-foreground">{speechNote}</p>}
+          {showTimings && <p className="mt-1 text-xs text-subtle">Rule engine response time (demo). This is not voice latency.</p>}
+        </form>
+        {error && bubbles.length > 0 && (
+          <div className="mx-3 mb-3 flex items-center justify-between gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+            <p>{error}</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => begin()}>
+              Retry
+            </Button>
+          </div>
+        )}
+      </section>
+
+      <aside aria-label="Call ticket" className="order-3 space-y-3 xl:order-none">
+        {session.note && <p className="rounded-md bg-warning-soft px-3 py-2 text-sm text-warning">{session.note}</p>}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-md font-semibold">Ticket</h2>
+            {turn?.outcome && <Badge tone={turn.outcome}>{turn.outcome}</Badge>}
+          </div>
+          <p className="mt-1 text-xs text-subtle">{captured} of 5 details captured</p>
+          <dl className="mt-2">
+            {fields.map((field) => {
+              const done = Boolean(field.value && field.value !== "–");
+              return (
+                <div
+                  key={field.id}
+                  className={cn(
+                    "flex items-start justify-between gap-3 rounded-sm px-1 py-1.5 transition-colors duration-150",
+                    flash === field.id && "bg-primary-soft",
+                  )}
+                >
+                  <dt className="text-sm text-muted-foreground">{field.label}</dt>
+                  <dd className={cn("flex items-center gap-1 text-right text-sm", field.mono && "font-mono tabular-nums")}>
+                    {done ? <Check className="h-3.5 w-3.5 text-success" aria-hidden /> : null}
+                    <span className={done ? "" : "text-subtle"}>{done ? field.value : "–"}</span>
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+          {turn && turn.offered.length > 0 && (
+            <div className="mt-3 border-t border-border pt-3">
+              <div className="text-xs font-medium text-muted-foreground">Offered</div>
+              <ul className="mt-1 space-y-1 text-sm">
+                {turn.offered.map((slot) => (
+                  <li key={slot}>{slot}</li>
+                ))}
+              </ul>
             </div>
           )}
-          {turn?.outcome === "escalated" && (
-            <div className="rounded-lg border border-[#efc8c4] bg-[#fdf6f5] p-4">
-              <div className="text-xs uppercase tracking-[0.14em] text-[#9d2c2c]">Transfer event</div>
-              <p className="mt-2 font-display text-2xl">{transferTo?.to_name}</p>
-              <p className="text-sm">{formatPhone(transferTo?.to_phone)}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{transferTo?.reason}</p>
+          <div className="mt-3 border-t border-border pt-3">
+            <div className="mb-1 flex items-center justify-between">
+              <h3 className="text-xs font-medium text-muted-foreground">Events</h3>
+              <Button type="button" size="sm" variant="ghost" aria-pressed={showTimings} onClick={() => setShowTimings((value) => !value)}>
+                {showTimings ? "Hide timings" : "Show timings"}
+              </Button>
             </div>
-          )}
-          <ScrollArea className="h-48 rounded-lg border border-border bg-card p-3">
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">Events this call</div>
-            {events.length === 0 && <p className="mt-2 text-sm text-muted-foreground">Nothing filed yet.</p>}
-            <ul className="mt-2 space-y-2">
+            {events.length === 0 && <p className="text-sm text-subtle">–</p>}
+            <ul className="space-y-1">
               {events.map((event, index) => (
-                <li key={`${event.type}-${index}`} className="text-sm">
-                  <span className="font-medium capitalize">{event.type}</span>
+                <li key={`${event.type}-${index}`} className="flex items-center gap-1 text-sm">
+                  <Check className="h-3.5 w-3.5 text-success" aria-hidden />
+                  <span className="capitalize">{event.type.replaceAll("_", " ")}</span>
                 </li>
               ))}
             </ul>
-          </ScrollArea>
-          {error && <p className="text-sm text-clay">{error}</p>}
-        </aside>
-      </div>
+          </div>
+        </div>
+        {smsPayload?.body && (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">Confirmation text</h3>
+              <Badge tone={smsSent ? "booked" : "mock"}>{smsSent ? "Sent" : "Mock"}</Badge>
+            </div>
+            <p className="mt-2 text-sm">{smsPayload.body}</p>
+          </div>
+        )}
+      </aside>
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="text-right">{value}</dd>
-    </div>
-  );
+function fieldMap(turn: DemoTurn | null): Record<string, string> {
+  return {
+    intent: turn?.intent || "",
+    issue: turn?.slots.issue || "",
+    name: turn?.slots.name || "",
+    phone: turn?.slots.phone || "",
+    address: turn?.slots.address || "",
+  };
+}
+
+function formatElapsed(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function wait(ms: number) {

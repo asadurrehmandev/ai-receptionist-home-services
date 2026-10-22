@@ -244,21 +244,35 @@ Pytest collects 205 tests. None of them call Anthropic or OpenAI. The keyless pa
 
 ## Screenshots
 
-![Dispatch board with call volume, bookings, and escalations](docs/screenshots/dashboard.png)
+The desk uses Geist, a white and zinc surface, and one safety-orange accent. Light and dark are both available. These shots are the Demo mode board: sample calls, a mocked CRM, and replies from the shop rules.
 
-![Call simulator mid-conversation, ticket filling in](docs/screenshots/simulator_mid_call.png)
+![Overview: calls, bookings, and today's visits](docs/screenshots/overview-1440-light.png)
 
-![Booking confirmation. The visit is on the board and no text was sent](docs/screenshots/booking_confirmation.png)
+![Overview in dark mode](docs/screenshots/overview-1440-dark.png)
 
-![Gas-smell call transferred to the on-call technician](docs/screenshots/escalation.png)
+![Overview on a phone](docs/screenshots/overview-390-light.png)
 
-![Booked jobs on the week calendar](docs/screenshots/calendar.png)
+![Call log](docs/screenshots/calls-1440-light.png)
 
-![CRM webhook payload for GoHighLevel, HubSpot, or Zapier](docs/screenshots/crm_webhooks.png)
+![Call transcript](docs/screenshots/call-1440-light.png)
 
-The board’s CRM handoff, then the webhook log on the Leads page:
+![Week calendar on a 7:00–19:00 grid](docs/screenshots/calendar-1440-light.png)
 
-![Walkthrough of the board and CRM webhook](docs/screenshots/walkthrough.gif)
+![Calendar in dark mode](docs/screenshots/calendar-1440-dark.png)
+
+![Calendar on a phone](docs/screenshots/calendar-390-light.png)
+
+![Visit details](docs/screenshots/calendar-visit-1440-light.png)
+
+![Call simulator, with the reply typing in](docs/screenshots/streaming-simulator-1440-light.png)
+
+![Call simulator after the greeting](docs/screenshots/simulator-1440-light.png)
+
+![Call simulator in dark mode](docs/screenshots/simulator-1440-dark.png)
+
+![Call simulator on a phone](docs/screenshots/simulator-390-light.png)
+
+![Leads and the mocked CRM webhook](docs/screenshots/leads-1440-light.png)
 
 ## Run it
 

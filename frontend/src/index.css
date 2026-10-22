@@ -3,24 +3,76 @@
 @tailwind utilities;
 
 :root {
-  --background: 40 33% 95%;
-  --foreground: 30 14% 10%;
-  --card: 40 45% 99%;
-  --card-foreground: 30 14% 10%;
-  --primary: 18 59% 45%;
-  --primary-foreground: 40 40% 98%;
-  --secondary: 150 16% 90%;
-  --secondary-foreground: 156 28% 16%;
-  --muted: 38 24% 91%;
-  --muted-foreground: 30 8% 36%;
-  --accent: 156 22% 18%;
-  --accent-foreground: 40 40% 96%;
-  --destructive: 2 58% 40%;
-  --destructive-foreground: 40 40% 98%;
-  --border: 36 18% 84%;
-  --input: 36 18% 84%;
-  --ring: 18 59% 45%;
-  --radius: 0.8rem;
+  --background: 0 0% 100%;
+  --foreground: 240 10% 4%;
+  --surface: 0 0% 98%;
+  --muted: 240 5% 96%;
+  --muted-foreground: 240 4% 34%;
+  --subtle-foreground: 240 4% 45%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 4%;
+  --border: 240 6% 90%;
+  --border-strong: 240 5% 84%;
+  --input: 240 6% 90%;
+  --primary: 21 90% 48%;
+  --primary-foreground: 240 10% 4%;
+  --primary-text: 17 88% 40%;
+  --primary-soft: 24 100% 95%;
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 240 6% 10%;
+  --accent: 240 5% 96%;
+  --accent-foreground: 240 6% 10%;
+  --destructive: 0 74% 42%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 21 90% 48%;
+  --success: 142 72% 29%;
+  --success-soft: 142 76% 96%;
+  --warning: 26 91% 37%;
+  --warning-soft: 48 100% 96%;
+  --danger: 0 73% 42%;
+  --danger-soft: 0 86% 97%;
+  --info: 224 76% 48%;
+  --info-soft: 214 100% 97%;
+  --radius: 0.375rem;
+  color-scheme: light;
+}
+
+.dark {
+  --background: 240 10% 4%;
+  --foreground: 0 0% 98%;
+  --surface: 240 6% 7%;
+  --muted: 240 5% 12%;
+  --muted-foreground: 240 5% 65%;
+  --subtle-foreground: 240 4% 56%;
+  --card: 240 6% 8%;
+  --card-foreground: 0 0% 98%;
+  --popover: 240 6% 8%;
+  --popover-foreground: 0 0% 98%;
+  --border: 240 4% 16%;
+  --border-strong: 240 5% 26%;
+  --input: 240 4% 16%;
+  --primary: 21 90% 48%;
+  --primary-foreground: 240 10% 4%;
+  --primary-text: 24 95% 64%;
+  --primary-soft: 22 60% 14%;
+  --secondary: 240 4% 16%;
+  --secondary-foreground: 0 0% 98%;
+  --accent: 240 4% 16%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 21 90% 48%;
+  --success: 142 69% 58%;
+  --success-soft: 142 40% 14%;
+  --warning: 38 92% 60%;
+  --warning-soft: 32 40% 14%;
+  --danger: 0 91% 71%;
+  --danger-soft: 0 40% 14%;
+  --info: 213 94% 68%;
+  --info-soft: 221 40% 16%;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -28,51 +80,18 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: #f4efe6;
-  color: #1c1915;
-  font-family: Outfit, ui-sans-serif, system-ui, sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Geist Variable", Geist, Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
 }
 
 #root { min-height: 100vh; }
 
-.phone-bezel {
-  background: #1c1915;
-  border-radius: 36px;
-  padding: 14px;
-  color: #f4efe6;
-}
-
-.phone-screen {
-  background: #f7f3ec;
-  color: #1c1915;
-  border-radius: 26px;
-  min-height: 560px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.wave {
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 16px;
-}
-
-.wave span {
-  width: 3px;
-  background: #b8612f;
-  border-radius: 99px;
-  animation: pulse-bar 1s ease-in-out infinite;
-}
-
-.wave span:nth-child(2) { animation-delay: 0.15s; }
-.wave span:nth-child(3) { animation-delay: 0.3s; }
-.wave span:nth-child(4) { animation-delay: 0.08s; }
-
-@keyframes pulse-bar {
-  0%, 100% { height: 4px; }
-  50% { height: 16px; }
+.font-mono, .mono {
+  font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
 }
 
 .caret {
@@ -80,15 +99,30 @@ body {
   width: 2px;
   height: 0.95em;
   margin-left: 1px;
-  background: #b8612f;
+  background: hsl(var(--primary));
   vertical-align: text-bottom;
   animation: blink 1s steps(1) infinite;
 }
 
-@keyframes blink {
-  50% { opacity: 0; }
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  animation: pulse-dot 1.4s ease-out infinite;
 }
 
-@media (max-width: 720px) {
-  .phone-screen { min-height: 520px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

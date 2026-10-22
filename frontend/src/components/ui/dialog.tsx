@@ -13,11 +13,11 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink/40" />
+    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-foreground/40" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-6",
+        "fixed left-1/2 top-1/2 z-50 w-[min(440px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border-strong bg-popover p-6 text-popover-foreground shadow-pop dark:shadow-none",
         className,
       )}
       {...props}
@@ -37,7 +37,7 @@ function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 }
 
 function DialogTitle({ className, ...props }: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>) {
-  return <DialogPrimitive.Title className={cn("font-display text-2xl", className)} {...props} />;
+  return <DialogPrimitive.Title className={cn("text-md font-semibold", className)} {...props} />;
 }
 
 function DialogDescription({

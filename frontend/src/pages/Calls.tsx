@@ -1,19 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 
+import { CallsTable } from "@/components/CallsTable";
 import { Empty, ErrorState, Loading } from "@/components/States";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, type CallSummary } from "@/lib/api";
-import { formatMs, formatPhone, formatWhen } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
-const FILTERS = ["all", "booked", "escalated", "missed", "spam", "qualified"];
+const FILTERS = [
+  { id: "all", label: "All" },
+  { id: "booked", label: "Booked" },
+  { id: "escalated", label: "Escalated" },
+  { id: "missed", label: "Missed" },
+  { id: "spam", label: "Spam" },
+  { id: "qualified", label: "Qualified" },
+];
 
 export function Calls() {
   const [calls, setCalls] = useState<CallSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const [showTimings, setShowTimings] = useState(false);
 
   function load() {
     api
@@ -40,80 +48,48 @@ export function Calls() {
   }, [calls, filter, query]);
 
   if (error && !calls) return <ErrorState message={error} onRetry={load} />;
-  if (!calls) return <Loading label="Pulling the call log…" />;
+  if (!calls) return <Loading label="Loading calls…" />;
 
   return (
-    <div className="space-y-5">
-      <header>
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">Transcripts</p>
-        <h1 className="mt-1 font-display text-4xl">Call log</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Every turn keeps the caller’s words, Riley’s reply, and how long the brain took. Open a row for the full
-          transcript and the CRM events that fired.
-        </p>
-      </header>
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap gap-2">
+    <div className="space-y-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Filter calls">
           {FILTERS.map((item) => (
             <button
-              key={item}
+              key={item.id}
               type="button"
-              onClick={() => setFilter(item)}
-              className={`rounded-full px-3 py-1 text-xs capitalize ${filter === item ? "bg-ink text-paper" : "bg-card text-muted-foreground border border-border"}`}
+              role="tab"
+              aria-selected={filter === item.id}
+              onClick={() => setFilter(item.id)}
+              className={cn(
+                "h-8 rounded-md px-2.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                filter === item.id ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted",
+              )}
             >
-              {item.replaceAll("_", " ")}
+              {item.label}
             </button>
           ))}
         </div>
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search name, phone, or issue"
-          className="md:max-w-xs"
-          aria-label="Search calls"
-        />
-      </div>
-      {visible.length === 0 ? (
-        <Empty title="Nothing in this filter" body="Start a simulator call, or clear the search to see the sample log." />
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-                <tr className="border-b border-border">
-                  <th className="px-4 py-3 font-medium">When</th>
-                  <th className="px-4 py-3 font-medium">Caller</th>
-                  <th className="px-4 py-3 font-medium">Intent</th>
-                  <th className="px-4 py-3 font-medium">Outcome</th>
-                  <th className="px-4 py-3 font-medium">Latency</th>
-                  <th className="px-4 py-3 font-medium">Channel</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((call) => (
-                  <tr key={call.id} className="border-b border-border last:border-0">
-                    <td className="px-4 py-3 text-muted-foreground">{formatWhen(call.started_at)}</td>
-                    <td className="px-4 py-3">
-                      <Link to={`/calls/${call.id}`} className="font-medium hover:text-copper">
-                        {call.caller_name || "Unknown caller"}
-                      </Link>
-                      <div className="text-xs text-muted-foreground">
-                        {formatPhone(call.caller_phone)}
-                        {call.issue ? ` · ${call.issue}` : ""}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 capitalize text-muted-foreground">{(call.intent || "—").replaceAll("_", " ")}</td>
-                    <td className="px-4 py-3">
-                      <Badge tone={call.outcome || "open"}>{call.outcome || "open"}</Badge>
-                    </td>
-                    <td className="px-4 py-3 tabular-nums">{formatMs(call.avg_latency_ms)}</td>
-                    <td className="px-4 py-3 capitalize text-muted-foreground">{call.channel}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name, phone, or issue"
+            className="w-full sm:w-64"
+            aria-label="Search calls"
+          />
+          <Button type="button" size="sm" variant="outline" aria-pressed={showTimings} onClick={() => setShowTimings((value) => !value)}>
+            {showTimings ? "Hide timings" : "Show timings"}
+          </Button>
         </div>
+      </div>
+      {showTimings && (
+        <p className="text-xs text-subtle">Rule engine response time (demo). This is not voice latency.</p>
+      )}
+      {visible.length === 0 ? (
+        <Empty title="No calls in this view" body="Clear the search, or place a test call in the simulator." />
+      ) : (
+        <CallsTable calls={visible} showTimings={showTimings} channel />
       )}
     </div>
   );

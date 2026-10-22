@@ -34,13 +34,14 @@ export function KeySettings({ label = "API key" }: { label?: string }) {
     setOpen(false);
   }
 
-  const holding = session.key ? (session.refused ? "Key refused — demo replies" : "Key held in memory for this tab") : "No key this session";
+  const holding = session.key ? (session.refused ? "Key refused. Demo replies are on." : "Key held in memory for this tab") : "No key this session";
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button type="button" size="sm" variant="outline">
-          {label}
+          <span className="sm:hidden">Key</span>
+          <span className="hidden sm:inline">{label}</span>
         </Button>
       </DialogTrigger>
       <DialogContent>

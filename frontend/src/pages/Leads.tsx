@@ -1,11 +1,14 @@
+import { AlertCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { CallerName } from "@/components/CallerName";
 import { Empty, ErrorState, Loading } from "@/components/States";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, type DeskEvent, type Lead } from "@/lib/api";
 import { formatPhone, formatWhen } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export function Leads() {
   const [leads, setLeads] = useState<Lead[] | null>(null);
@@ -29,79 +32,81 @@ export function Leads() {
   }, []);
 
   if (error && !leads) return <ErrorState message={error} onRetry={load} />;
-  if (!leads || !events) return <Loading label="Loading the CRM tray…" />;
+  if (!leads || !events) return <Loading label="Loading leads…" />;
 
   const texts = events.filter((event) => event.type === "sms");
   const hooks = events.filter((event) => event.type === "webhook");
   const activeHook = hooks.find((event) => event.id === selected) || hooks[0];
 
   return (
-    <div className="space-y-5">
-      <header>
-        <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">GoHighLevel · HubSpot · Zapier</p>
-        <h1 className="mt-1 font-display text-4xl">Leads and handoff</h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Qualified callers become leads. Bookings, cancellations, and emergency transfers each emit a generic CRM
-          webhook (GoHighLevel, HubSpot, or Zapier-compatible). Texts are logged, not sent, until a messaging provider
-          is attached.
-        </p>
-      </header>
+    <div className="space-y-4">
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Bookings and escalations post JSON to a CRM webhook. With no URL configured, delivery is logged here and marked Mock.
+      </p>
       <Tabs defaultValue="leads">
         <TabsList>
           <TabsTrigger value="leads">Leads</TabsTrigger>
-          <TabsTrigger value="texts">Confirmation texts</TabsTrigger>
+          <TabsTrigger value="texts">Texts</TabsTrigger>
           <TabsTrigger value="hooks">Webhooks</TabsTrigger>
         </TabsList>
         <TabsContent value="leads">
           {leads.some((lead) => lead.status === "missed_transfer") && (
-            <div className="border-b border-[#e7c7c2] bg-[#f8e4e1] px-4 py-3 text-sm text-[#9d2c2c]">
-              A transfer was missed. These callers are waiting on a callback from the office.
+            <div className="mb-3 flex gap-2 rounded-md bg-danger-soft px-3 py-2 text-sm text-danger" role="status">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              <p>A transfer was missed. These callers are waiting on a callback from the office.</p>
             </div>
           )}
           {leads.length === 0 ? (
             <Empty title="No leads yet" body="A booked job or an escalation creates one." />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border bg-card">
-              <table className="w-full text-left text-sm">
-                <thead className="text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr className="border-b border-border">
-                    <th className="px-4 py-3 font-medium">Contact</th>
-                    <th className="px-4 py-3 font-medium">Issue</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leads.map((lead) => (
-                    <tr key={lead.id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-3">
-                        <div className="font-medium">{lead.name || "Unnamed"}</div>
-                        <div className="text-xs text-muted-foreground">{formatPhone(lead.phone)}</div>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{lead.issue || "—"}</td>
-                      <td className="px-4 py-3">
-                        <Badge tone={lead.status || "open"}>{lead.status || "open"}</Badge>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground">{formatWhen(lead.created_at)}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead className="bg-surface text-xs font-medium text-muted-foreground">
+                    <tr className="h-9 border-b border-border">
+                      <th className="sticky left-0 bg-surface px-3 font-medium">Contact</th>
+                      <th className="px-3 font-medium">Issue</th>
+                      <th className="px-3 font-medium">Status</th>
+                      <th className="px-3 font-medium">When</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {leads.map((lead) => (
+                      <tr key={lead.id} className="h-10 border-b border-border last:border-0">
+                        <td className="sticky left-0 bg-card px-3">
+                          <CallerName name={lead.name} phone={lead.phone} />
+                          {lead.name && lead.phone ? (
+                            <div className="font-mono text-xs tabular-nums text-subtle">{formatPhone(lead.phone)}</div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 text-muted-foreground">{lead.issue || "–"}</td>
+                        <td className="px-3">
+                          <Badge tone={lead.status || "open"}>{lead.status || "open"}</Badge>
+                        </td>
+                        <td className="whitespace-nowrap px-3 tabular-nums text-subtle">{formatWhen(lead.created_at, false)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </TabsContent>
         <TabsContent value="texts">
           {texts.length === 0 ? (
-            <Empty title="No texts logged" body="A booking keeps the message we would send. Twilio has to accept it before anyone is texted." />
+            <Empty title="No texts logged" body="A booking keeps the message we would send. Nothing is texted until Twilio accepts it." />
           ) : (
-            <ul className="space-y-2">
+            <ul className="divide-y divide-border rounded-lg border border-border bg-card">
               {texts.map((event) => {
                 const payload = event.payload as { to?: string; body?: string; delivery?: string };
-                const note = payload.delivery === "sent" ? "sent by Twilio" : "logged, not sent";
+                const sent = payload.delivery === "sent";
                 return (
-                  <li key={event.id} className="rounded-lg border border-border bg-card p-3">
-                    <div className="text-xs text-muted-foreground">To {formatPhone(payload.to)} · {note}</div>
-                    <p className="mt-1 text-sm leading-6">{payload.body}</p>
+                  <li key={event.id} className="px-3 py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-xs tabular-nums text-subtle">{formatPhone(payload.to)}</span>
+                      <Badge tone={sent ? "booked" : "mock"}>{sent ? "Sent" : "Mock"}</Badge>
+                    </div>
+                    <p className="mt-1 text-sm">{payload.body}</p>
                   </li>
                 );
               })}
@@ -113,21 +118,26 @@ export function Leads() {
             <Empty title="No webhook events" body="Book a job or escalate a call to generate a payload." />
           ) : (
             <div className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
-              <ul className="space-y-2">
+              <ul className="overflow-hidden rounded-lg border border-border bg-card">
                 {hooks.map((event) => {
-                  const payload = event.payload as { event?: string; contact?: { name?: string }; delivery?: { status?: string } };
+                  const payload = event.payload as { event?: string; contact?: { name?: string; phone?: string }; delivery?: { status?: string } };
+                  const mock = (payload.delivery?.status || event.status) === "mock";
                   return (
-                    <li key={event.id}>
+                    <li key={event.id} className="border-b border-border last:border-0">
                       <button
                         type="button"
                         onClick={() => setSelected(event.id || null)}
-                        className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
-                          activeHook?.id === event.id ? "border-copper bg-[#f8f1ea]" : "border-border bg-card"
-                        }`}
+                        className={cn(
+                          "w-full px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                          activeHook?.id === event.id && "bg-primary-soft shadow-[inset_2px_0_0_hsl(var(--primary))]",
+                        )}
                       >
-                        <div className="font-medium">{payload.event}</div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium">{payload.event}</span>
+                          {mock && <Badge tone="mock">Mock</Badge>}
+                        </div>
                         <div className="text-xs text-muted-foreground">
-                          {payload.contact?.name || "No name"} · {payload.delivery?.status || event.status}
+                          <CallerName name={payload.contact?.name} phone={payload.contact?.phone} />
                         </div>
                       </button>
                     </li>
@@ -135,12 +145,12 @@ export function Leads() {
                 })}
               </ul>
               {activeHook && (
-                <div className="rounded-lg border border-border bg-[#1c1915] p-4 text-[#f4efe6]">
+                <div className="rounded-lg border border-border bg-card p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
-                    <span className="text-xs uppercase tracking-[0.14em] text-[#e7a27a]">Payload</span>
+                    <h3 className="text-sm font-medium">Payload</h3>
                     <Button
                       size="sm"
-                      variant="secondary"
+                      variant="outline"
                       onClick={() => {
                         if (!activeHook.id) return;
                         api
@@ -152,8 +162,8 @@ export function Leads() {
                       Replay delivery
                     </Button>
                   </div>
-                  {replay && <p className="mb-2 text-xs text-[#e7a27a]">Last replay: {replay}</p>}
-                  <pre className="overflow-x-auto text-xs leading-5">{JSON.stringify(activeHook.payload, null, 2)}</pre>
+                  {replay && <p className="mb-2 text-xs text-muted-foreground">Last replay: {replay}</p>}
+                  <pre className="overflow-x-auto rounded-md bg-muted p-3 font-mono text-xs leading-5">{JSON.stringify(activeHook.payload, null, 2)}</pre>
                 </div>
               )}
             </div>
