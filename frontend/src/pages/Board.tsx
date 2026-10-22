@@ -134,7 +134,7 @@ export function Board() {
             <p className="mt-2 font-display text-2xl leading-tight">A missed evening call is a job for the next company in the search results.</p>
             <p className="mt-3 text-sm leading-6 text-[#d5ddd6]">
               This sample answered {data.total_calls} calls. {escalated} went to a human. {booked} landed on the calendar
-              with a confirmation text logged for the CRM.
+              with the visit logged on the board. A text is sent only when Twilio SMS is connected.
             </p>
           </div>
         </div>

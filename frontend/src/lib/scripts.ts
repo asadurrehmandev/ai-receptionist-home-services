@@ -50,10 +50,10 @@ export const SCRIPTS: CallerScript[] = [
   {
     id: "reschedule",
     label: "Move Dana's visit",
-    detail: "Existing customer already on the board",
+    detail: "Last four digits and the visit day, then a clear yes",
     turns: [
       "Hi this is Dana Cho, I need to reschedule my appointment to the earliest you have.",
-      "512-555-0133",
+      "0133 Thursday",
       "yes",
     ],
   },

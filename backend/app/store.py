@@ -339,6 +339,20 @@ class Store:
                 return matches[0]
         return None
 
+    def match_visit(self, last4: str, day: str) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM bookings WHERE status='booked'").fetchall()
+        found = []
+        for row in rows:
+            record = _booking_dict(row)
+            phone = _digits(record.get("phone"))
+            if len(phone) < 4 or phone[-4:] != str(last4):
+                continue
+            if datetime.fromisoformat(record["start"]).date().isoformat() != day:
+                continue
+            found.append(record)
+        return found
+
     def get_call_by_external(self, external_id: str) -> str | None:
         with self._lock:
             row = self.conn.execute(
@@ -507,6 +521,9 @@ class StoreCalendar:
 
     def find(self, name, phone):
         return self.store.find_booking(name, phone)
+
+    def match_visit(self, last4, day):
+        return self.store.match_visit(last4, day)
 
     def book(self, draft):
         return self.store.insert_booking(draft)

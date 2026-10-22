@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import time
+from uuid import uuid4
 from xml.sax.saxutils import escape
 
 from fastapi import Request
@@ -36,6 +38,33 @@ def public_url(request: Request, settings: Settings) -> str:
     return str(request.url)
 
 
+def mint_stream_token(secret: str, ttl: int = 120) -> str:
+    """Short-lived HMAC for a Media Stream URL. This is not the admin token."""
+    expires = int(time.time()) + ttl
+    nonce = uuid4().hex
+    message = f"{nonce}.{expires}".encode()
+    signature = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()[:32]
+    return f"{nonce}.{expires}.{signature}"
+
+
+def stream_token_valid(secret: str, token: str) -> bool:
+    if not secret or not token:
+        return False
+    try:
+        nonce, expires, signature = token.split(".", 2)
+        if int(expires) < time.time():
+            return False
+    except ValueError:
+        return False
+    message = f"{nonce}.{expires}".encode()
+    expected = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()[:32]
+    return hmac.compare_digest(expected, signature)
+
+
+def stream_secret(settings: Settings) -> str:
+    return settings.admin_token or settings.twilio_auth_token or ""
+
+
 def stream_ws_url(request: Request, settings: Settings) -> str:
     if settings.public_base_url:
         base = settings.public_base_url.rstrip("/")
@@ -45,7 +74,11 @@ def stream_ws_url(request: Request, settings: Settings) -> str:
         base = "wss://" + base[len("https://") :]
     elif base.startswith("http://"):
         base = "ws://" + base[len("http://") :]
-    return base + "/api/voice/stream"
+    url = base + "/api/voice/stream"
+    secret = stream_secret(settings)
+    if secret:
+        url += "?token=" + mint_stream_token(secret)
+    return url
 
 
 def gather_twiml(say: str, action: str, voice: str, language: str = "en-US") -> str:

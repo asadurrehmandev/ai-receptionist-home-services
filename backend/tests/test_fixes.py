@@ -191,7 +191,8 @@ def test_twilio_query_string_dedupe_silence_and_dial_fallback(tmp_path):
                 )
             },
         )
-        assert "texted the on-call" in dialed.text.lower()
+        assert "call 911" in dialed.text.lower()
+        assert "texted" not in dialed.text.lower()
 
 
 def test_adversarial_model_cannot_change_facts(tmp_path):

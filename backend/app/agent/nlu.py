@@ -10,46 +10,17 @@ from __future__ import annotations
 
 import re
 
-# Definite emergencies. Purchase, quote, and "last year" lines are excluded first.
-EMERGENCY_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\b(burst(?:ed)? pipe|pipe burst|busted pipe|pipe just burst|pipe (?:broke|broken|split))\b", "Burst pipe"),
-    (r"\b(gas smell|smell of gas|smells like gas|smell gas|smelling gas|smell(?:s|ing)? (?:like )?gas|rotten eggs?|sulfur smell|hissing gas|gas (?:is )?hissing|gas leak)\b", "Gas smell"),
-    (r"\bhuele a gas\b", "Gas smell"),
-    (r"\b(carbon monoxide|co alarm|co detector).{0,40}\b(going off|beeping|chirping|won't stop|wont stop|alarm)\b", "Carbon monoxide"),
-    (r"\b(going off|beeping|chirping).{0,40}\b(carbon monoxide|co alarm|co detector)\b", "Carbon monoxide"),
-    (r"\b(co|carbon monoxide) alarm\b", "Carbon monoxide"),
-    (r"\b(sewer backup|sewage backup|sewage coming|raw sewage|sewage is coming|sewer is coming|sewage is backing|sewage backing)\b", "Sewer backup"),
-    (r"\b(flooding|flooded basement|basement flooded|house is flooded|water everywhere|flooding the garage)\b", "Active flooding"),
-    (r"\b(sparking|electrical fire|outlet (is )?smoking|burning smell from the panel|smoke from the outlet)\b", "Electrical hazard"),
-    (
-        r"(no heat|furnace|heat is out|heater).{0,80}(baby|infant|newborn|elderly|freezing|shivering|30 degrees|28 degrees)"
-        r"|(baby|infant|newborn|elderly|freezing|shivering).{0,80}(no heat|furnace|heat)",
-        "No heat with a vulnerable occupant",
-    ),
-    (
-        r"(headache|dizzy|dizziness|nauseat\w*|nauseous|feels? sick).{0,80}(furnace|heater|carbon|gas)"
-        r"|(furnace|heater).{0,80}(headache|dizzy|dizziness|nauseat\w*|nauseous)",
-        "Possible carbon monoxide",
-    ),
-    (
-        r"(water heater|tank).{0,60}(leaking|leak|flooding|pouring).{0,40}(won't stop|wont stop|all over|garage|everywhere|flood)"
-        r"|(won't stop|wont stop|all over).{0,40}(water heater|garage)",
-        "Active water heater leak",
-    ),
-    (r"\b(pouring|gushing|coming) (?:through|from) the ceiling\b|\bwater (?:is |won't stop |wont stop )?pouring\b|\bceiling (?:is )?(?:pouring|gushing|leaking)\b", "Water through the ceiling"),
-    (r"\b(agua).{0,40}(techo|no para)\b", "Water through the ceiling"),
-)
-
-UNCERTAIN_WATER = re.compile(
-    r"\b(water heater|pipe|ceiling|basement).{0,40}\b(leak|leaking|dripping)\b|\b(leak|leaking)\b.{0,40}\b(water heater|pipe|ceiling)\b",
-    re.I,
-)
+from app.agent.hazard import classify_emergency as classify_hazard
 
 SPAM_PATTERNS: tuple[str, ...] = (
     r"\bseo\b",
+    r"\bads\b",
+    r"\badvertising\b",
     r"rank(ing)? on google",
     r"google (business|listing|reviews)",
     r"business listing",
+    r"\byelp\b",
+    r"lower your rates",
     r"car warranty",
     r"extended warranty",
     r"\bmedicare\b",
@@ -75,7 +46,11 @@ EXISTING = re.compile(
     re.I,
 )
 
-QUOTE = re.compile(r"\b(how much|how many|price|cost|estimate|quot\w*|ballpark|beat that|beat this|can you beat)\b", re.I)
+QUOTE = re.compile(
+    r"\b(how much|how many|price|cost|estimate|quot\w*|ballpark|beat that|beat this|can you beat|"
+    r"cheapest|discount|waive|price match|cash price)\b",
+    re.I,
+)
 
 HUMAN = re.compile(
     r"\b(real person|live person|real human|talk to (a )?(human|person|manager|supervisor)|"
@@ -93,6 +68,7 @@ YES = re.compile(
     r"\b(yes|yeah|yep|yup|sure|okay|ok|please do|book it|lock it|confirm|that works|do it|go ahead|sounds good)\b",
     re.I,
 )
+CLEAN_YES_BLOCK = re.compile(r"\b(wait|which|hold on|actually|but|maybe|or)\b|\?", re.I)
 NO = re.compile(r"\b(no|nope|nah|different time|another time)\b", re.I)
 
 PHONE = re.compile(r"(?:\+?1[\s.\-]?)?(?:\(\d{3}\)|\d{3})[\s.\-]?\d{3}[\s.\-]\d{4}\b")
@@ -187,6 +163,7 @@ SPANISH_HINTS = (
     "agua",
     "fregadero",
     "huele",
+    "olor",
     "cocina",
     "ayuda",
     "estufa",
@@ -194,6 +171,13 @@ SPANISH_HINTS = (
     "calefaccion",
     "baño",
     "bano",
+    "inundando",
+    "inundada",
+    "chispas",
+    "alcantarilla",
+    "casa",
+    "fuerte",
+    "hay",
 )
 
 
@@ -205,55 +189,9 @@ def normalize(text: str) -> str:
     return cleaned
 
 
-def _mask_negations(text: str) -> str:
-    return re.sub(
-        r"\b(?:no|not|without|isn't|isnt|aren't|arent)\b(?:\s+\w+){0,5}\s+"
-        r"(gas|burst|flood|sewage|sewer|sparking|carbon)",
-        " ",
-        text,
-        flags=re.I,
-    )
-
-
-def _false_emergency(text: str) -> bool:
-    """Purchase, quote, past-tense, and explicitly non-urgent lines."""
-    if re.search(r"\b(not an emergency|no emergency|isn't an emergency|isnt an emergency)\b", text):
-        return True
-    if re.search(r"\b(last year|last winter|last month|years ago|used to)\b", text):
-        return True
-    if re.search(r"\b(install|replace|replacing|quote|purchase|buy)\b.{0,48}\b(carbon monoxide|co detector|detector)\b", text):
-        return True
-    if re.search(r"\b(carbon monoxide|co) detector\b.{0,32}\b(install|replace|quote)\b", text):
-        return True
-    if re.search(r"\bgas bill\b", text):
-        return True
-    if re.search(r"\b(quote|replace|replacing|install|new)\b.{0,40}\bgas water heater\b", text):
-        return True
-    if re.search(r"\bgas water heater\b.{0,40}\b(quote|replace|install|efficiency)\b", text):
-        return True
-    if re.search(r"\b(a little|slow drip|just a drip|dripping faucet)\b", text) and not re.search(
-        r"\b(won't stop|wont stop|all over|pouring|flood|everywhere|gas|sewage|carbon|sparking)\b", text
-    ):
-        return True
-    if re.search(r"\bfaucet\b", text) and not re.search(
-        r"\b(gas|sewage|carbon|sparking|burst|everywhere|pouring|flood)\b", text
-    ):
-        return True
-    return False
-
-
 def classify_emergency(text: str) -> tuple[str, str | None]:
-    """Return ('definite'|'uncertain'|'none', label)."""
-    norm = normalize(text)
-    if _false_emergency(norm):
-        return "none", None
-    masked = _mask_negations(norm)
-    for pattern, label in EMERGENCY_PATTERNS:
-        if re.search(pattern, masked, re.I):
-            return "definite", label
-    if UNCERTAIN_WATER.search(masked) and not re.search(r"\b(faucet|drip|dripping|a little|slow)\b", masked):
-        return "uncertain", "Possible active leak"
-    return "none", None
+    """Return ('definite'|'advice'|'none', label). Concepts live in hazard.py."""
+    return classify_hazard(text)
 
 
 def detect_emergency(text: str) -> str | None:
@@ -281,7 +219,13 @@ def looks_spanish(text: str) -> bool:
 
 
 def is_haggle(text: str) -> bool:
-    return bool(re.search(r"\b(beat|match that|cheaper|for fifty|fifty bucks|discount|can you do it for)\b", normalize(text)))
+    return bool(
+        re.search(
+            r"\b(beat|match that|match their|cheaper|cheapest|for fifty|fifty bucks|discount|"
+            r"can you do it for|waive|cash|fixed income|price match)\b",
+            normalize(text),
+        )
+    )
 
 
 def detect_intent(text: str) -> str:
@@ -315,6 +259,16 @@ def is_yes(text: str) -> bool:
     if is_no(norm) and not re.search(r"\b(yes|yeah|yep|sure|book it)\b", norm):
         return False
     return bool(YES.search(norm))
+
+
+def is_clean_yes(text: str) -> bool:
+    """A cancel confirmation. Questions, hedges, and a new time do not count."""
+    raw = text or ""
+    if CLEAN_YES_BLOCK.search(raw):
+        return False
+    if re.search(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|noon|\d{1,2}\s*(?:am|pm))\b", raw, re.I):
+        return False
+    return is_yes(raw)
 
 
 def is_no(text: str) -> bool:
@@ -424,15 +378,28 @@ def _tidy_street(street: str) -> str:
     return " ".join(titled)
 
 
+UNIT = re.compile(r"\b(?:apartment|apt|unit|suite|#)\s*([A-Za-z0-9-]+)\b", re.I)
+
+
+def extract_unit(text: str) -> str | None:
+    match = UNIT.search(text)
+    if not match:
+        return None
+    return f"Apt {match.group(1).upper()}"
+
+
 def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
-    match = STREET.search(text)
+    source = text
+    if is_correction(text):
+        source = re.split(r"\b(?:actually|i meant|correction)\b", text, maxsplit=1, flags=re.I)[-1]
+    match = STREET.search(source)
     if match:
-        return _tidy_street(match.group(1))
+        return _with_unit(_tidy_street(match.group(1)), source)
     city_pattern = "|".join(re.escape(city) for city in cities) if cities else r"$^"
     loose = re.search(
         rf"\b(\d{{1,6}}\s+[A-Za-z][A-Za-z.'-]{{1,}}(?:\s+[A-Za-z][A-Za-z.'-]{{1,}}){{0,3}})"
-        rf"(?=\s*(?:,|\b(?:{city_pattern})\b|\b\d{{5}}\b|$))",
-        text,
+        rf"(?=\s*(?:,|\b(?:{city_pattern})\b|\b\d{{5}}\b|\b(?:apartment|apt|unit|suite)\b|$))",
+        source,
         re.I,
     )
     if not loose:
@@ -440,7 +407,14 @@ def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
     candidate = loose.group(1).strip(" ,.")
     if re.search(r"\b(yes|yeah|earliest|tomorrow|phone|number)\b", candidate, re.I):
         return None
-    return _tidy_street(candidate)
+    return _with_unit(_tidy_street(candidate), source)
+
+
+def _with_unit(street: str, source: str) -> str:
+    unit = extract_unit(source)
+    if unit and unit.lower() not in street.lower():
+        return f"{street} {unit}"
+    return street
 
 
 def extract_city(text: str, cities: tuple[str, ...]) -> str | None:
@@ -470,12 +444,20 @@ def spelled_word(text: str) -> str | None:
     return None
 
 
+def _proper_token(token: str) -> str:
+    if "-" in token:
+        return "-".join(_proper_token(part) for part in token.split("-"))
+    if "'" in token:
+        return "'".join(part[:1].upper() + part[1:] if part else "" for part in token.split("'"))
+    return token[:1].upper() + token[1:]
+
+
 def _plausible_name(value: str) -> bool:
     parts = value.split()
     if not 1 <= len(parts) <= 3:
         return False
     for part in parts:
-        if part.lower() in NAME_STOP or not re.fullmatch(r"[A-Za-z][A-Za-z']*", part):
+        if part.lower() in NAME_STOP or not re.fullmatch(r"[A-Za-z][A-Za-z'-]*", part):
             return False
     if parts[0].lower() in NAME_STOP:
         return False
@@ -497,13 +479,13 @@ def extract_introduced_name(text: str) -> str | None:
         maxsplit=1,
         flags=re.I,
     )[0]
-    tokens = [re.sub(r"[^A-Za-z']", "", token) for token in chunk.split()]
+    tokens = [re.sub(r"[^A-Za-z'-]", "", token) for token in chunk.split()]
     tokens = [token for token in tokens if token and token.lower() not in NAME_STOP]
     if not tokens or tokens[0].lower() in NAME_STOP:
         return None
     if len(tokens) == 1:
         return None
-    candidate = " ".join(token.capitalize() for token in tokens[:3])
+    candidate = " ".join(_proper_token(token) for token in tokens[:3])
     if not _plausible_name(candidate):
         return None
     return candidate
@@ -513,7 +495,7 @@ def guess_bare_name(text: str) -> str | None:
     introduced = extract_introduced_name(text)
     if introduced:
         return introduced
-    trailing = re.findall(r"\b([A-Z][a-z']+)\s+([A-Z][a-z']+)\b", text)
+    trailing = re.findall(r"\b([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\s+([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\b", text)
     if trailing:
         first, last = trailing[-1]
         candidate = f"{first} {last}"
@@ -525,7 +507,7 @@ def guess_bare_name(text: str) -> str | None:
         return None
     if any(part.lower() in NAME_STOP for part in parts):
         return None
-    candidate = " ".join(part.capitalize() for part in parts)
+    candidate = " ".join(_proper_token(part) for part in parts)
     if not _plausible_name(candidate):
         return None
     return candidate

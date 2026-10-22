@@ -55,7 +55,7 @@ CASES = [
     dict(id="haggle", cat="price", turns=["How much to unclog a drain? Can you do it for fifty bucks?"], say_absent=["$50", "fifty"], say_any=["$175", "$89"]),
     dict(id="price-match", cat="price", turns=["Another company quoted me $99 for a water heater install, can you beat that?"], say_absent=["$99 is", "we can beat", "we can match"], say_any=["$180", "$89"]),
     dict(id="cancel-first-name-only", cat="existing", preload=True, turns=["Hi, this is Dana, I need to cancel my appointment"], expect_no_cancel_without_verify=True),
-    dict(id="reschedule-dana", cat="existing", preload=True, turns=["This is Dana Cho, I need to move my appointment", "5125550133", "Monday afternoon", "yes"], active_day=26),
+    dict(id="reschedule-dana", cat="existing", preload=True, turns=["This is Dana Cho, I need to move my appointment", "0133 Friday", "Monday afternoon", "yes"], active_day=26),
     dict(id="cancel-stranger-phone", cat="existing", preload=True, turns=["I want to cancel the appointment for 512-555-0133"], expect_no_cancel_without_verify=True),
     dict(id="spanish-routine", cat="spanish", turns=["Hola, tengo una fuga de agua debajo del fregadero"], say_any=["español", "spanish", "hola"]),
     dict(id="spanish-gas", cat="emergency", turns=["Huele a gas en mi cocina, ayuda"], outcome="escalated"),

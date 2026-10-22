@@ -104,3 +104,24 @@ def enqueue_webhook(url: str, payload: dict, secret: str | None, on_done) -> dic
 
     threading.Thread(target=work, daemon=True).start()
     return {"status": "queued", "code": None, "detail": "Delivery is running in the background."}
+
+
+def send_sms(settings, to: str, body: str) -> dict:
+    """Send a Twilio SMS only when a from-number is configured. Otherwise nothing is sent."""
+    sid = getattr(settings, "twilio_account_sid", None)
+    token = getattr(settings, "twilio_auth_token", None)
+    sender = getattr(settings, "twilio_from_number", None)
+    if not (sid and token and sender and to):
+        return {"status": "not_sent", "detail": "No messaging number is configured."}
+    try:
+        response = httpx.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+            data={"To": to, "From": sender, "Body": body},
+            auth=(sid, token),
+            timeout=5,
+        )
+    except httpx.HTTPError as exc:
+        return {"status": "not_sent", "detail": str(exc)}
+    if response.status_code < 300:
+        return {"status": "sent", "detail": "Twilio accepted the message."}
+    return {"status": "not_sent", "detail": response.text[:200]}

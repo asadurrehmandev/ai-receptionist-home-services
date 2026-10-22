@@ -8,10 +8,9 @@ from pathlib import Path
 import pytest
 
 from app.agent.calendar import MemoryCalendar
-from app.agent.dialog import Dialog
+from app.agent.dialog import TOOL_SPECS, Dialog
 from app.agent.engine import Engine
 from app.config_loader import load_business
-from app.llm.scripted import ScriptedToolModel
 from app.service import FixedClock
 from tests.heldout_callers import CASES, THU, dana, score_case
 
@@ -34,7 +33,8 @@ def test_rules_heldout(case):
     assert result["ok"], (result["fails"], result["transcript"][-1])
 
 
-@pytest.mark.parametrize("case", CASES, ids=[case["id"] for case in CASES])
-def test_tool_mode_heldout(case):
-    result = _run(case, ScriptedToolModel())
-    assert result["ok"], (result["fails"], result["transcript"][-1])
+def test_tool_mode_is_not_scored_with_follow_rules():
+    """follow_rules is a private fallback, not a Claude tool, so it is not a tool-mode score."""
+    names = [spec["name"] for spec in TOOL_SPECS]
+    assert "follow_rules" not in names
+    assert set(names) == {"find_slots", "hold_slot", "book", "lookup_booking", "cancel", "transfer"}

@@ -70,7 +70,7 @@ export function CalendarPage() {
         </p>
       </header>
       {active.length === 0 ? (
-        <Empty title="No jobs held" body="Run the drain-call scenario in the simulator. The slot shows up here and a confirmation text is logged." />
+        <Empty title="No jobs held" body="Run the drain-call scenario in the simulator. The slot shows up here. No text is sent unless Twilio SMS is connected." />
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {days.map((day) => {

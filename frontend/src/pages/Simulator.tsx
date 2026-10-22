@@ -157,7 +157,9 @@ export function Simulator() {
   const slots = turn?.slots;
   const sms = [...events].reverse().find((event) => event.type === "sms");
   const transfer = [...events].reverse().find((event) => event.type === "transfer");
-  const smsBody = (sms?.payload as { body?: string } | undefined)?.body;
+  const smsPayload = sms?.payload as { body?: string; delivery?: string } | undefined;
+  const smsBody = smsPayload?.body;
+  const smsSent = smsPayload?.delivery === "sent";
   const transferTo = transfer?.payload as { to_name?: string; to_phone?: string; reason?: string } | undefined;
 
   return (
@@ -168,8 +170,8 @@ export function Simulator() {
           <h1 className="mt-1 font-display text-4xl">Call simulator</h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">
             Talk with the browser’s microphone or type as the homeowner. Riley answers with the same brain the Twilio
-            webhook uses. Without an Anthropic key, that brain is the rule receptionist. With a key, Claude calls the
-            calendar tools and cannot invent a time or a price.
+            webhook uses. Without an Anthropic key, that brain is the rule receptionist. With a key, Claude is asked
+            to book through the calendar tools. A time, price, or discount has to match a tool result.
           </p>
         </div>
       </header>
@@ -225,7 +227,9 @@ export function Simulator() {
               </div>
             </div>
             {turn?.outcome === "booked" && (
-              <div className="bg-[#e5f2ea] px-4 py-2 text-sm text-[#1f6a45]">Booked. Confirmation text is in the log.</div>
+              <div className="bg-[#e5f2ea] px-4 py-2 text-sm text-[#1f6a45]">
+                {smsSent ? "Booked. A confirmation text was sent." : "Booked. The visit is on the board. No text was sent."}
+              </div>
             )}
             {turn?.outcome === "escalated" && (
               <div className="bg-[#f8e4e1] px-4 py-2 text-sm text-[#9d2c2c]">
@@ -297,7 +301,9 @@ export function Simulator() {
           </div>
           {turn?.outcome === "booked" && smsBody && (
             <div className="rounded-lg border border-[#cfe3d6] bg-[#f3faf5] p-4">
-              <div className="text-xs uppercase tracking-[0.14em] text-[#1f6a45]">Confirmation text</div>
+              <div className="text-xs uppercase tracking-[0.14em] text-[#1f6a45]">
+                {smsSent ? "Confirmation text" : "Text drafted, not sent"}
+              </div>
               <p className="mt-2 text-sm leading-6">{smsBody}</p>
             </div>
           )}

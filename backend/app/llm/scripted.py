@@ -14,7 +14,7 @@ class ScriptedToolModel:
     def __init__(self, mode: str = "rules") -> None:
         self.mode = mode
 
-    def complete(self, messages: list, tools: list) -> dict:
+    def complete(self, messages: list, tools: list, timeout: float | None = None) -> dict:
         if self.mode == "slow":
             time.sleep(0.2)
         if self.mode == "weekday":

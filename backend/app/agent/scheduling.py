@@ -37,6 +37,7 @@ MONTHS = {
 @dataclass(frozen=True)
 class Preference:
     day: datetime | None = None
+    day_until: datetime | None = None
     part: str | None = None
     earliest: time | None = None
     around: time | None = None
@@ -55,7 +56,13 @@ class Preference:
         return " ".join(bits) or "that window"
 
     def is_empty(self) -> bool:
-        return self.day is None and self.part is None and self.earliest is None and self.around is None
+        return (
+            self.day is None
+            and self.day_until is None
+            and self.part is None
+            and self.earliest is None
+            and self.around is None
+        )
 
 
 def _midnight(moment: datetime) -> datetime:
@@ -81,13 +88,38 @@ def _hour_from_match(hour_text: str, minute_text: str | None, suffix: str | None
     return time(hour, minute)
 
 
+_WORD_HOUR = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
+
+
+def _upcoming(now: datetime, weekday: int, *, force_next: bool = False) -> datetime:
+    delta = (weekday - now.weekday()) % 7
+    if force_next and delta == 0:
+        delta = 7
+    return _midnight(now + timedelta(days=delta))
+
+
 def parse_preference(text: str, now: datetime) -> Preference | None:
     norm = re.sub(r"\s+", " ", text.strip().lower())
     day = None
+    day_until = None
     month_match = re.search(
         r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b",
         norm,
     )
+    week_from = re.search(r"\ba week from (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", norm)
     if month_match:
         month = MONTHS[month_match.group(1)]
         day_num = int(month_match.group(2))
@@ -100,9 +132,22 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
             if candidate.date() < now.date():
                 candidate = candidate.replace(year=year + 1)
             day = _midnight(candidate)
+    elif week_from:
+        base = _upcoming(now, WEEKDAY_NAMES[week_from.group(1)])
+        if base.date() == now.date():
+            base = _midnight(now)
+        day = base + timedelta(days=7)
+    elif re.search(r"\bend of next week\b", norm):
+        days_until_monday = (7 - now.weekday()) % 7 or 7
+        next_monday = _midnight(now + timedelta(days=days_until_monday))
+        day = next_monday + timedelta(days=3)
+        day_until = next_monday + timedelta(days=5)
+    elif re.search(r"\bday after tomorrow\b", norm):
+        day = _midnight(now + timedelta(days=2))
     elif re.search(r"\bthis weekend\b", norm):
         delta = (5 - now.weekday()) % 7
         day = _midnight(now + timedelta(days=delta))
+        day_until = day + timedelta(days=1)
     elif re.search(r"\btomorrow\b", norm):
         day = _midnight(now + timedelta(days=1))
     elif re.search(r"\btoday\b", norm):
@@ -110,10 +155,7 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
     else:
         for name, index in WEEKDAY_NAMES.items():
             if re.search(rf"\b{name}\b", norm):
-                delta = (index - now.weekday()) % 7
-                if re.search(rf"\bnext {name}\b", norm) and delta == 0:
-                    delta = 7
-                day = _midnight(now + timedelta(days=delta))
+                day = _upcoming(now, index, force_next=bool(re.search(rf"\bnext {name}\b", norm)))
                 break
     part = None
     if "after lunch" in norm or "afternoon" in norm:
@@ -127,11 +169,28 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
     if after and "after lunch" not in norm:
         earliest = _hour_from_match(after.group(1), after.group(2), after.group(3), assume_pm=True)
     around = None
-    around_match = re.search(r"\b(?:at|around)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", norm)
-    if around_match:
-        around = _hour_from_match(around_match.group(1), around_match.group(2), around_match.group(3), assume_pm=True)
-    preference = Preference(day=day, part=part, earliest=earliest, around=around)
-    if preference.is_empty():
+    if re.search(r"\bnoon\b", norm):
+        around = time(12, 0)
+    else:
+        around_match = re.search(r"\b(?:at|around)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", norm)
+        if around_match:
+            around = _hour_from_match(around_match.group(1), around_match.group(2), around_match.group(3), assume_pm=True)
+        else:
+            word_hour = re.search(
+                r"\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b"
+                r"(?:\s+o'clock)?(?:\s+in the\s+(morning|afternoon|evening))?",
+                norm,
+            )
+            if word_hour and word_hour.group(2):
+                hour = _WORD_HOUR[word_hour.group(1)]
+                part_name = word_hour.group(2)
+                if part_name == "afternoon" and hour < 12:
+                    hour += 12
+                if part_name == "evening" and hour < 12:
+                    hour += 12
+                around = time(hour, 0)
+    preference = Preference(day=day, day_until=day_until, part=part, earliest=earliest, around=around)
+    if preference.is_empty() and day_until is None:
         return None
     return preference
 
@@ -188,9 +247,16 @@ def available_slots(
     def collect(pref: Preference | None) -> list[datetime]:
         found: list[datetime] = []
         duration = timedelta(minutes=config.slot_minutes)
+        cap = 16 if pref is not None and pref.around is not None else limit
         for start in iter_slot_starts(config, now):
             if pref is not None:
-                if pref.day is not None and start.date() != pref.day.date():
+                if pref.day is not None and pref.day_until is None and start.date() != pref.day.date():
+                    continue
+                if pref.day is not None and start.date() < pref.day.date():
+                    continue
+                if pref.day_until is not None and start.date() > pref.day_until.date():
+                    continue
+                if pref.day is None and pref.day_until is not None:
                     continue
                 if not _part_ok(start, pref):
                     continue
@@ -198,7 +264,7 @@ def available_slots(
             if overlaps(start, end, busy):
                 continue
             found.append(start)
-            if len(found) >= limit:
+            if len(found) >= cap:
                 break
         return found
 

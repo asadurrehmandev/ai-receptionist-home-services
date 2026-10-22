@@ -94,6 +94,7 @@ export type Health = {
   twilio_signature: boolean;
   media_stream_ready: boolean;
   brain: string;
+  demo_mode?: boolean;
 };
 
 export type PublicConfig = {
@@ -132,11 +133,29 @@ export type DemoTurn = {
   events: { type: string; payload: Record<string, unknown> }[];
 };
 
+export function adminToken(): string {
+  return sessionStorage.getItem("adminToken") || "";
+}
+
+export function setAdminToken(token: string) {
+  if (token) sessionStorage.setItem("adminToken", token);
+  else sessionStorage.removeItem("adminToken");
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = adminToken();
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init?.headers || {}),
+    },
     ...init,
   });
+  if (response.status === 401) {
+    setAdminToken("");
+    throw new Error("unauthorized");
+  }
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || `Request failed (${response.status})`);

@@ -41,6 +41,8 @@ class Calendar(Protocol):
 
     def find(self, name: str | None, phone: str | None) -> dict | None: ...
 
+    def match_visit(self, last4: str, day: str) -> list[dict]: ...
+
     def book(self, draft: dict) -> dict: ...
 
     def cancel(self, booking_id: str) -> dict: ...
@@ -73,6 +75,19 @@ class MemoryCalendar:
             if len(matches) == 1:
                 return matches[0]
         return None
+
+    def match_visit(self, last4: str, day: str) -> list[dict]:
+        found = []
+        for booking in self.bookings:
+            if booking.get("status") != "booked":
+                continue
+            phone = _digits(booking.get("phone"))
+            if len(phone) < 4 or phone[-4:] != last4:
+                continue
+            if datetime.fromisoformat(booking["start"]).date().isoformat() != day:
+                continue
+            found.append(booking)
+        return found
 
     def book(self, draft: dict) -> dict:
         with self._lock:

@@ -22,6 +22,7 @@ class Settings:
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
     twilio_auth_token: str | None = None
     twilio_account_sid: str | None = None
+    twilio_from_number: str | None = None
     public_base_url: str = ""
     admin_token: str | None = None
     demo_mode: bool = True
@@ -58,6 +59,7 @@ def settings_from_env() -> Settings:
         elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
         twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN") or None,
         twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID") or None,
+        twilio_from_number=os.environ.get("TWILIO_FROM_NUMBER") or None,
         public_base_url=os.environ.get("PUBLIC_BASE_URL", ""),
         admin_token=os.environ.get("ADMIN_TOKEN") or None,
         demo_mode=os.environ.get("DEMO_MODE", "1") != "0",

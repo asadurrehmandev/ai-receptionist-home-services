@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -25,10 +27,14 @@ from app.voice.twilio import (
     public_url,
     say_and_hangup,
     signature_is_valid,
+    stream_secret,
+    stream_token_valid,
     stream_twiml,
     stream_ws_url,
     use_media_stream,
 )
+
+_admin_ok: ContextVar[bool] = ContextVar("admin_ok", default=False)
 
 logger = logging.getLogger("receptionist")
 
@@ -50,12 +56,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         if not settings.twilio_auth_token:
             logger.warning("TWILIO_AUTH_TOKEN is empty. Twilio signature checks are DISABLED.")
+        stop_purge = threading.Event()
+
+        def purge_loop() -> None:
+            while not stop_purge.wait(24 * 60 * 60):
+                if settings.retention_days > 0:
+                    store.purge_before(datetime.now(config.zone) - timedelta(days=settings.retention_days))
+
         if settings.retention_days > 0:
             cutoff = datetime.now(config.zone) - timedelta(days=settings.retention_days)
             store.purge_before(cutoff)
+            threading.Thread(target=purge_loop, daemon=True).start()
         if settings.seed_on_start and store.count_calls() == 0:
             seed_demo(service)
         yield
+        stop_purge.set()
         store.close()
 
     app = FastAPI(title="AI Receptionist for Home Services", lifespan=lifespan)
@@ -203,7 +218,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result = started if not speech else service.turn(call_id, speech, caller_id=caller)
         else:
             result = service.turn(call_id, speech, caller_id=caller)
-        voice = config.gather_voice
+        voice = _voice(result)
         language = _language(result)
         if result.get("outcome") == "escalated":
             xml = dial_twiml(result["say"], config.on_call_phone, voice, _dial_action(request), config.phone_e164)
@@ -221,20 +236,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         status = (form.get("DialCallStatus") or "").lower()
         voice = config.gather_voice
         if status in {"no-answer", "busy", "failed", "canceled"}:
+            from app.integrations import send_sms
+
+            page = send_sms(
+                settings,
+                config.on_call_phone,
+                f"{config.name}: missed transfer from {form.get('From') or 'unknown'}. Please call them back.",
+            )
             service.store.add_event(
                 form.get("CallSid"),
-                "sms",
-                {
-                    "to": config.on_call_phone,
-                    "body": f"{config.name}: missed transfer from {form.get('From') or 'unknown'}. Please call them back.",
-                },
-                "logged",
+                "page",
+                {"to": config.on_call_phone, "delivery": page["status"], "detail": page.get("detail")},
+                page["status"],
                 datetime.now(config.zone),
             )
-            say = (
-                f"{config.on_call_name} didn't pick up. We've texted the on-call technician. "
-                "They will call you back at the number you're calling from."
-            )
+            if page["status"] == "sent":
+                say = (
+                    f"{config.on_call_name} didn't pick up. The on-call tech is being paged. "
+                    "If you smell gas, leave the house and call 911."
+                )
+            else:
+                say = (
+                    f"{config.on_call_name} didn't pick up. If you smell gas, leave the house and call 911. "
+                    "We have not sent a text. Please call the shop again if you still need a person."
+                )
             return Response(content=say_and_hangup(say, voice), media_type="application/xml")
         return Response(content=say_and_hangup("Thanks for holding. Goodbye.", voice), media_type="application/xml")
 
@@ -278,18 +303,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return "es-US"
         return config.gather_language
 
+    def _voice(result: dict) -> str:
+        if result.get("language") == "es":
+            return "Polly.Lupe"
+        return config.gather_voice
+
     def _require_demo() -> None:
         if not settings.demo_mode:
             raise HTTPException(status_code=404, detail="Not found")
 
     def _require_admin() -> None:
-        return
+        if settings.demo_mode:
+            return
+        if not _admin_ok.get():
+            raise HTTPException(status_code=401, detail="Admin token required")
 
     def _stream_allowed(websocket: WebSocket) -> bool:
-        if settings.demo_mode:
-            return True
         token = websocket.query_params.get("token") or ""
-        if settings.admin_token and token == settings.admin_token:
+        secret = stream_secret(settings)
+        if secret and stream_token_valid(secret, token):
+            return True
+        if settings.demo_mode and not token:
             return True
         return False
 
@@ -300,12 +334,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             length = request.headers.get("content-length")
             if length and length.isdigit() and int(length) > 100_000:
                 return JSONResponse(status_code=413, content={"detail": "Request too large"})
+            _admin_ok.set(False)
             if path not in PUBLIC_API and not path.startswith("/api/voice/twilio"):
                 if not settings.demo_mode:
                     header = request.headers.get("authorization") or ""
                     token = header.removeprefix("Bearer ").strip()
                     if not settings.admin_token or token != settings.admin_token:
                         return JSONResponse(status_code=401, content={"detail": "Admin token required"})
+                    _admin_ok.set(True)
+                else:
+                    _admin_ok.set(True)
         return await call_next(request)
 
     _mount_spa(app, settings.static_dir)

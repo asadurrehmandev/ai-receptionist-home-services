@@ -87,14 +87,15 @@ export function Leads() {
         </TabsContent>
         <TabsContent value="texts">
           {texts.length === 0 ? (
-            <Empty title="No texts logged" body="A confirmed booking writes the SMS body here." />
+            <Empty title="No texts logged" body="A booking keeps the message we would send. Twilio has to accept it before anyone is texted." />
           ) : (
             <ul className="space-y-2">
               {texts.map((event) => {
-                const payload = event.payload as { to?: string; body?: string };
+                const payload = event.payload as { to?: string; body?: string; delivery?: string };
+                const note = payload.delivery === "sent" ? "sent by Twilio" : "logged, not sent";
                 return (
                   <li key={event.id} className="rounded-lg border border-border bg-card p-3">
-                    <div className="text-xs text-muted-foreground">To {formatPhone(payload.to)} · logged, not sent</div>
+                    <div className="text-xs text-muted-foreground">To {formatPhone(payload.to)} · {note}</div>
                     <p className="mt-1 text-sm leading-6">{payload.body}</p>
                   </li>
                 );

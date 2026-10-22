@@ -148,7 +148,7 @@ SCENARIOS = [
         "turns": DRAIN + ["the earliest you have", "yes"],
         "outcome": "booked",
         "intent": "new_job",
-        "say_contains": ["You're booked", "11:30 AM", "text a confirmation", "(512) 555-0164", "$89"],
+        "say_contains": ["You're booked", "11:30 AM", "have not sent a text", "(512) 555-0164", "$89"],
         "transcript_contains": ["Who am I speaking with", "best phone number", "street address"],
         "events": ["booking", "sms", "webhook", "lead"],
         "booking_start_contains": "T11:30:00",
@@ -329,7 +329,7 @@ SCENARIOS = [
         "preload": "dana",
         "turns": [
             "Hi this is Dana Cho, I need to reschedule my appointment to the earliest you have.",
-            "512-555-0133",
+            "0133 Thursday",
             "yes",
         ],
         "outcome": "rescheduled",
@@ -342,7 +342,7 @@ SCENARIOS = [
     {
         "id": "existing-cancel",
         "preload": "dana",
-        "turns": ["This is Dana Cho. Please cancel my appointment.", "512-555-0133", "yes"],
+        "turns": ["This is Dana Cho. Please cancel my appointment.", "0133 Thursday", "yes"],
         "outcome": "cancelled",
         "say_contains": ["I've cancelled", "Thursday", "8:30 AM"],
         "events": ["booking", "webhook"],
@@ -351,10 +351,10 @@ SCENARIOS = [
     {
         "id": "existing-unknown-name",
         "preload": "dana",
-        "turns": ["I need to reschedule my appointment.", "512-555-0199"],
+        "turns": ["I need to reschedule my appointment.", "0199 Thursday"],
         "outcome": None,
-        "say_contains": ["don't have an appointment"],
-        "checkpoints": [{"after": 0, "contains": ["phone number"]}],
+        "say_contains": ["don't have a visit"],
+        "checkpoints": [{"after": 0, "contains": ["last four"]}],
         "events_absent": ["booking"],
     },
     {

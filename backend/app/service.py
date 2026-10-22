@@ -12,7 +12,7 @@ from app.agent.engine import Engine, SessionState
 from app.agent.nlu import caller_id_digits
 from app.agent.scheduling import available_slots, format_slot
 from app.config_loader import BusinessConfig
-from app.integrations import deliver_webhook, enqueue_webhook
+from app.integrations import deliver_webhook, enqueue_webhook, send_sms
 from app.llm.claude import ClaudeClient
 from app.store import Store, StoreCalendar
 
@@ -43,6 +43,7 @@ class ReceptionService:
         model = settings.model_client
         if model is None and settings.anthropic_api_key:
             model = ClaudeClient(settings.anthropic_api_key, settings.anthropic_model)
+        self.engine.sms_sender = lambda phone, body: send_sms(settings, phone, body)
         self.dialog = Dialog(self.engine, model)
         self._guard = threading.Lock()
         self._call_locks: dict[str, threading.Lock] = {}
@@ -72,7 +73,9 @@ class ReceptionService:
             state = self.store.load_state(call_id)
             if caller_id and not state.caller_id:
                 state.caller_id = caller_id_digits(caller_id)
-            if text and state.last_caller_text == text and state.last_reply:
+            # Long identical utterances are Twilio retries. Short answers such as
+            # "yes" are allowed again once the phase has moved on.
+            if text and len(text.split()) >= 4 and state.last_caller_text == text and state.last_reply:
                 cached = self._public(call_id, state.last_reply, type("R", (), {"latency_ms": 0.0, "events": []})(), state)
                 cached["duplicate"] = True
                 cached["engine_ms"] = 0.0
@@ -109,7 +112,7 @@ class ReceptionService:
                 payload["delivery"] = delivery
                 status = delivery["status"]
             elif event["type"] == "sms":
-                status = "logged"
+                status = payload.get("delivery") or "not_sent"
             elif event["type"] == "transfer":
                 status = "transfer"
             self.store.add_event(call_id, event["type"], payload, status, now)
