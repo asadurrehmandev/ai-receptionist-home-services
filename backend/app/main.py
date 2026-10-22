@@ -315,12 +315,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             store.add_event(call_id or call_sid, "webhook", {**hook, "delivery": delivery}, delivery["status"], now)
             spanish = _caller_language(call_sid) == "es"
             guidance = _missed_guidance(hazard, spanish)
-            promised = page["status"] == "sent" or delivery["status"] in {"mock", "delivered"}
-            callback = (
-                ("Una persona le devolverá la llamada." if spanish else "Someone from the office will call you back.")
-                if promised
-                else ""
-            )
+            if settings.demo_mode:
+                promised = page["status"] == "sent" or delivery["status"] in {"mock", "delivered"}
+            else:
+                promised = page["status"] == "sent" or delivery["status"] == "delivered"
+            if promised:
+                callback = "Una persona le devolverá la llamada." if spanish else "Someone from the office will call you back."
+            else:
+                callback = (
+                    "La llamada quedó registrada para la oficina. Llame al 911 si alguien está en peligro."
+                    if spanish
+                    else "The call has been logged for the office. Call 911 if anyone is in danger."
+                )
             if page["status"] == "sent":
                 lead = (
                     f"{config.on_call_name} no contestó. Estamos avisando al técnico de guardia."

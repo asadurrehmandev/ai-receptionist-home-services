@@ -15,13 +15,16 @@ import unicodedata
 _NEGATED = re.compile(
     r"\b(?:no|not|without|don't|dont|do not|sin|no hay|isn't|isnt|nothing)\b"
     r"(?:\s+(?:a|an|any|the|just|really|even|of)){0,2}\s+"
-    r"(?:gas|smell|odor|odour|leak|sparks?|sewage|humo|olor)\b",
+    r"(?:gas|smells?|smelling|odor\w*|odour\w*|stinks?|stinking|reeks?|reeking|"
+    r"whiff\w*|fumes?|leak\w*|sparks?|sewage|humo|olor)\b",
     re.I,
 )
 _HISTORICAL = re.compile(
     r"\b(last year|last winter|last month|last week|years ago|months ago|"
     r"already fixed|was fixed|were fixed|already repaired|got it fixed|"
-    r"we fixed|used to|was already|had already|already stopped)\b",
+    r"we fixed|used to|was already|had already|already stopped|"
+    r"last summer|last fall|last autumn|last spring|over the winter|during the winter|"
+    r"this past winter|previous winter|was serviced|had it serviced|seasonal maintenance)\b",
     re.I,
 )
 _CURRENT = re.compile(
@@ -39,6 +42,7 @@ _GAS_BILL = re.compile(r"\bgas\s+(?:bill|invoice|utility|company)\b", re.I)
 _GAS_APPLIANCE = re.compile(r"\bgas\s+(?:water heater|furnace|stove|range|dryer|fireplace)\b", re.I)
 _GAS_SIGNAL = re.compile(
     r"\b(smell|smells|smelling|odor|odour|leak|leaking|hiss|hissing|rotten|sulfur|sulphur|"
+    r"stink\w*|reek\w*|whiff\w*|fumes?|"
     r"fuerte|olor|huele|huelen|azufre)\b",
     re.I,
 )
@@ -62,7 +66,7 @@ _CO_BATTERY_ISSUE = re.compile(
 _CO_PARTS_ERRAND = re.compile(r"\b(bring|parts|faucet|install|quote|buy|purchase)\b", re.I)
 _CO_BATTERY = re.compile(r"\b(battery|batteries|pila|pilas)\b", re.I)
 _SYMPTOM = re.compile(
-    r"\b(headaches?|dizzy|dizziness|nauseous|nauseated|nausea|vomit\w*|"
+    r"\b(headaches?|dizzy|dizziness|woozy|wooziness|nauseous|nauseated|nausea|vomit\w*|"
     r"throwing up|feels? sick|passed out|confused)\b",
     re.I,
 )
@@ -209,6 +213,12 @@ def _negated_at(clause: str, index: int) -> bool:
     """True when a negation word governs the token at index, not a hedge or a 'no,' restart."""
     window = clause[max(0, index - 42):index]
     window = re.sub(r"^.*\bno\s*,", "", window)
+    window = re.sub(
+        r"\bnot\s+(?:urgent|a big deal|that bad|to worry|an emergency)\b",
+        " ",
+        window,
+        flags=re.I,
+    )
     if re.search(r"[,;]\s*$", window):
         return False
     words = re.findall(r"[a-z0-9']+", window.lower())
@@ -565,6 +575,181 @@ def _class_hazard(text: str) -> tuple[str, str] | None:
     return None
 
 
+_FLAME = re.compile(r"\b(flames?|on fire|ablaze|catching fire|caught fire)\b", re.I)
+_SMOKE_NEAR = re.compile(
+    r"\b(filled with smoke|full of smoke|smoke is rolling|smoke rolling|smoke coming|"
+    r"smoke pouring|see smoke|seeing smoke)\b|"
+    r"\b(smoke|smoking)\b.{0,48}\b(furnace|heater|boiler|dryer|compressor|condenser|"
+    r"panel|outlet|stove|oven|water heater|heat pump|closet|unit)\b|"
+    r"\b(furnace|heater|boiler|dryer|compressor|condenser|panel|outlet|stove|oven|"
+    r"water heater|heat pump|closet)\b.{0,48}\b(smoke|smoking|flames?)\b",
+    re.I,
+)
+_ODOR_WORD = re.compile(
+    r"\b(smell\w*|odor\w*|odour\w*|stink\w*|reek\w*|whiff\w*|fumes?)\b",
+    re.I,
+)
+_LEFT_ON = re.compile(
+    r"\b(burner|cooktop|stove|range)\b.{0,56}\b(left on|left running|was left|forgot to|"
+    r"didn't turn off|did not turn off|won't shut|wont shut|will not shut)\b|"
+    r"\b(left on|left running|was left)\b.{0,56}\b(burner|cooktop|stove|range)\b",
+    re.I,
+)
+_FAST_WATER = re.compile(
+    r"\b(rising(?:\s+fast)?|sheeting|pushing up|coming up|pouring across|"
+    r"running from|will not slow|won't slow|wont slow|faster than)\b",
+    re.I,
+)
+_FLUE = re.compile(r"\b(flue(?: pipe)?|vent pipe|exhaust pipe)\b", re.I)
+_FLUE_BAD = re.compile(
+    r"\b(loose|disconnected|pulled loose|came off|hanging|separated)\b",
+    re.I,
+)
+_FUEL_BOX = re.compile(r"\b(furnace|boiler|water heater|heater|stove)\b", re.I)
+_BROWNED = re.compile(r"\b(brown|browned|blackened|blistered)\b", re.I)
+_ELEC_THING = re.compile(r"\b(outlet|receptacle|socket|plug|breaker|panel)\b", re.I)
+_TRIP_AGAIN = re.compile(r"\b(keeps opening|trips again|keeps tripping|tripped again)\b", re.I)
+_DAMP_MARK = re.compile(r"\b(damp|wet)\s+(mark|spot|stain|patch)\b", re.I)
+
+
+def _hit(text: str, pattern: re.Pattern[str]) -> bool:
+    return any(not _negated_at(text, match.start()) for match in pattern.finditer(text))
+
+
+def _fire_or_smoke(text: str) -> bool:
+    """Flames or smoke from equipment. A negated cooking mention is not a fire."""
+    if _COOKING.search(text) and not re.search(r"\b(outlet|panel|breaker|furnace|dryer|compressor)\b", text):
+        return False
+    if _hit(text, _FLAME):
+        return True
+    if _hit(text, _SMOKE_NEAR):
+        return True
+    burning = re.search(r"\b(burning|blistered|charred)\b", text)
+    if burning and not _negated_at(text, burning.start()):
+        if re.search(r"\b(closet|furnace|heater|panel|breaker|outlet|dryer|water heater)\b", text):
+            if not (_COOKING.search(text) and not re.search(r"\b(outlet|panel|furnace|heater|dryer)\b", text)):
+                return True
+    return False
+
+
+def _gas_anywhere(text: str) -> bool:
+    """A gas smell pages even when the caller hedges, and not when they say there is none."""
+    if re.search(r"\b(car|vehicle|truck|gas station|out of gas|ran out of gas)\b", text):
+        return False
+    odor_live = _hit(text, _ODOR_WORD)
+    gas_live = _hit(text, _GAS_WORD)
+    if _GAS_APPLIANCE.search(text) and not odor_live and not re.search(r"\b(leak\w*|hiss\w*)\b", text):
+        return False
+    if re.search(r"\b(convert|conversion|hook ?up|install)\b", text) and not odor_live:
+        return False
+    if gas_live and odor_live:
+        return True
+    rotten = re.search(r"\b(rotten eggs?|sulfur|sulphur)\b", text)
+    if rotten and not _negated_at(text, rotten.start()):
+        return True
+    if _LEFT_ON.search(text) and odor_live:
+        return True
+    return False
+
+
+def _fast_water(text: str) -> bool:
+    """Water that is rising, sheeting, or coming up. A caller's 'it can wait' does not lower it."""
+    if not re.search(r"\b(water|drain|tile|ceiling|sewage)\b", text):
+        return False
+    if _mild_water(text) and not _FAST_WATER.search(text) and not _WATER_FORCE.search(text):
+        return False
+    found = _FAST_WATER.search(text)
+    if found and not _negated_at(text, found.start()):
+        return True
+    return False
+
+
+def _loose_flue(text: str) -> bool:
+    flue = _FLUE.search(text)
+    if not flue or _negated_at(text, flue.start()):
+        return False
+    if not _FLUE_BAD.search(text):
+        return False
+    if re.search(r"\b(dusty|dust)\b", text) and not _FLUE_BAD.search(text):
+        return False
+    return bool(_FUEL_BOX.search(text) or re.search(r"\bflue\b", text))
+
+
+def _alarm_with_symptom(text: str) -> bool:
+    if not re.search(r"\b(alarm|detector)\b", text):
+        return False
+    if not _hit(text, _SYMPTOM):
+        return False
+    sounding = re.search(
+        r"\b(sounding|going off|won't quit|wont quit|will not quit|won't stop|wont stop|"
+        r"will not stop|keeps sounding|nonstop|has been sounding)\b",
+        text,
+    )
+    if sounding and not _negated_at(text, sounding.start()):
+        return True
+    return False
+
+
+def _browned_electrical(text: str) -> bool:
+    thing = _ELEC_THING.search(text)
+    if not thing:
+        return False
+    brown = _BROWNED.search(text)
+    if brown and not _negated_at(text, brown.start()):
+        return True
+    trip = _TRIP_AGAIN.search(text)
+    hot = re.search(r"\b(smell\w*|hot|scorch\w*|burnt|burned|burning|heat)\b", text)
+    if trip and hot and not _negated_at(text, hot.start()) and not _negated_at(text, trip.start()):
+        return True
+    return False
+
+
+def _broad_hazard(text: str) -> tuple[str, str] | None:
+    """Whole-utterance cues. A hedge or a downplay in the same breath does not clear them."""
+    if _fire_or_smoke(text):
+        return "definite", "Electrical hazard"
+    if _gas_anywhere(text):
+        return "definite", "Gas"
+    if _loose_flue(text) or _alarm_with_symptom(text):
+        return "definite", "Carbon monoxide"
+    if _fast_water(text):
+        return "definite", "Active water"
+    if _browned_electrical(text):
+        return "definite", "Electrical hazard"
+    return None
+
+
+def _damp_mark(text: str) -> bool:
+    if _WATER_FORCE.search(text) or _FAST_WATER.search(text):
+        return False
+    return bool(_DAMP_MARK.search(text))
+
+
+def _lone_category(text: str) -> bool:
+    """A bare noun such as 'the water' is a question, not a page."""
+    words = re.findall(r"[a-z']+", text)
+    fillers = {"the", "a", "an", "my", "our", "just", "only", "some", "it", "its", "is"}
+    content = [word for word in words if word not in fillers]
+    categories = {"water", "gas", "electric", "electrical", "electricity", "heat", "heater", "alarm"}
+    if not content or len(content) > 2:
+        return False
+    return all(word in categories for word in content)
+
+
+def _uncertain_without_model(text: str) -> bool:
+    """With the embedder down, only an unresolved cue asks. A drain or an address does not."""
+    if _routine_context(text) or _explicit_clear(text) or _mild_water(text):
+        return False
+    return bool(
+        re.search(
+            r"\b(smell\w*|odor\w*|odour\w*|stink\w*|reek\w*|whiff\w*|fumes?|smoke|flame\w*|"
+            r"fire|spark\w*|alarm|detector|dizzy|woozy|headache|nausea|burning|scorch\w*|"
+            r"flood\w*|gushing|pouring|sewage|gas)\b",
+            text,
+        )
+    )
+
+
 def classify_emergency(text: str) -> tuple[str, str | None]:
     """Return ('definite'|'ask'|'advice'|'none', label).
 
@@ -597,6 +782,9 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
             return "definite", "Unsafe indoor temperature"
         if _emergency_word(clause):
             return "definite", "Caller said emergency"
+    broad = _broad_hazard(folded)
+    if broad is not None:
+        return broad
     if advice:
         return "advice", "CO detector battery"
     extra = _class_hazard(folded)
@@ -609,7 +797,7 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         return "definite", "Hazard signals"
     if _explicit_clear(folded) or _routine_context(folded):
         return "none", None
-    if _borderline(folded):
+    if _borderline(folded) or _damp_mark(folded):
         return "ask", "Uncertain hazard"
     if _mild_water(folded) and not _GAS_SIGNAL.search(folded) and not _CO_HARD.search(folded):
         if not _unnegated(folded, _ELECTRICAL):
@@ -618,7 +806,11 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
 
     guessed = semantic_hazard(text)
     if guessed[1] == "Hazard model unavailable":
-        return "ask", "Hazard model unavailable"
+        if _uncertain_without_model(folded):
+            return "ask", "Hazard model unavailable"
+        return "none", None
+    if _lone_category(folded) and guessed[0] == "definite":
+        guessed = ("ask", guessed[1] or "Uncertain hazard")
     if guessed[1] == "Unsafe indoor temperature" and not _comfort_context(folded):
         guessed = ("none", None)
     if guessed[1] == "Active water" and _mild_water(folded):
@@ -640,9 +832,8 @@ def _mild_water(text: str) -> bool:
     """A drip is not a flood. Semantic water cannot promote it."""
     if _WATER_FORCE.search(text) or _sewage_active(text) or _WATER_PATH.search(text):
         return False
-    if re.search(r"\b(drip\w*|leak\w*|weeping|seeping|gote\w*|goutte\w*|tropft|pingando)\b", text):
-        return True
-    return False
+    drip = re.compile(r"\b(drip\w*|leak\w*|weeping|seeping|gote\w*|goutte\w*|tropft|pingando)\b", re.I)
+    return _hit(text, drip)
 
 
 def _comfort_context(text: str) -> bool:
@@ -697,8 +888,14 @@ def _routine_context(text: str) -> bool:
         and not _SYMPTOM.search(text)
     ):
         return True
-    if re.search(r"\b(fee|charge|how much|price|cost)\b", text) and _EMERGENCY_WORD.search(text):
-        if not _GAS_SIGNAL.search(text) and not _ELECTRICAL.search(text) and not _WATER_FORCE.search(text):
+    if re.search(r"\b(fee|charge|how much|price|cost|rate|after[- ]hours|weekend visit)\b", text):
+        if (
+            not _hit(text, _ODOR_WORD)
+            and not _fire_or_smoke(text)
+            and not _ELECTRICAL.search(text)
+            and not _WATER_FORCE.search(text)
+            and not _FAST_WATER.search(text)
+        ):
             return True
     if re.search(r"\b(only emergency|wallet|not an emergency)\b", text) and not _GAS_SIGNAL.search(text):
         if not _ELECTRICAL.search(text) and not _WATER_FORCE.search(text) and not _COMFORT.search(text):

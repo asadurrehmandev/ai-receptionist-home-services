@@ -19,9 +19,13 @@ from app.agent.nlu import (
     extract_street,
     extract_zip,
     format_phone,
+    danger_affirmed,
     detect_language,
+    fallback_name,
     guess_bare_name,
     house_correction,
+    is_garbled,
+    is_negated_danger,
     last4_correction,
     is_correction,
     is_haggle,
@@ -29,6 +33,7 @@ from app.agent.nlu import (
     is_no,
     is_spam,
     is_yes,
+    wants_callback,
     spelled_word,
     wants_abandon,
     wants_cancel,
@@ -70,6 +75,12 @@ class SessionState:
     verify_fails: int = 0
     unclear_count: int = 0
     asked_field: str | None = None
+    name_rejects: int = 0
+    name_confidence: str | None = None
+    address_from_prompt: bool = False
+    address_read_back: bool = False
+    degraded_asked: bool = False
+    safety_reasks: int = 0
     messages: list = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
 
@@ -166,25 +177,17 @@ class Engine:
             state.language = detected
 
         if state.phase == "hazard_check":
-            level_now, emergency_now = classify_emergency(raw)
-            if level_now == "definite" or is_yes(raw):
-                state.hazard = emergency_now or "Caller confirmed danger"
-                self._fill(state, raw)
-                return self._escalate(state, started, state.hazard)
-            if is_no(raw):
-                self._fill(state, raw)
-                if state.language != "en":
-                    return self._language_handoff(state, started)
-                state.phase = "discover"
-                return self._continue_intake(state, raw, started)
-            else:
-                state.hazard = "Uncertain hazard"
-                return self._escalate(state, started, state.hazard)
+            return self._answer_hazard_check(state, raw, started)
 
         if state.hazard:
             return self._escalate(state, started, state.hazard)
 
         level, emergency = classify_emergency(raw)
+        if level == "ask" and emergency == "Hazard model unavailable":
+            if state.degraded_asked:
+                level, emergency = "none", None
+            else:
+                state.degraded_asked = True
         if level == "definite" and emergency:
             self._fill(state, raw)
             state.intent = "emergency"
@@ -244,6 +247,10 @@ class Engine:
                     "I appreciate you thinking of us, but we're not able to take sales calls. Have a good day.",
                     started,
                 )
+            if state.intent in {"new_job", "quote"} and not state.issue:
+                cleaned = " ".join(raw.split())
+                if len(cleaned.split()) >= 3 and not is_spam(cleaned):
+                    state.issue = cleaned[:80].rstrip(".")
             if state.intent == "unclear":
                 state.unclear_count += 1
                 if state.unclear_count > 2:
@@ -279,6 +286,11 @@ class Engine:
                     started,
                 )
             if state.phase == "collect_name" and not state.name:
+                state.name_rejects += 1
+                if state.name_rejects >= 2:
+                    state.name = fallback_name(raw)
+                    state.name_confidence = "low"
+                    return self._continue_intake(state, raw, started)
                 return self._finish(
                     state,
                     self._line(state, "Sorry, I missed the name. Who am I speaking with?", "Perdón, no escuché el nombre. ¿Con quién hablo?"),
@@ -357,9 +369,15 @@ class Engine:
             city = extract_city(text, self.config.cities)
             if city:
                 state.city = city
-        street = None if last4 else extract_street(text, self.config.cities)
+        street = None if last4 else extract_street(
+            text,
+            self.config.cities,
+            answering=state.phase == "collect_address",
+        )
         if street and (not state.street or is_correction(text) or house):
             state.street = street
+            if state.phase == "collect_address":
+                state.address_from_prompt = True
         if state.street:
             state.address = _compose_address(state.street, state.city, state.zip)
         issue = extract_issue(text)
@@ -377,8 +395,9 @@ class Engine:
             if replacement and parts:
                 parts[-1] = replacement
                 state.name = " ".join(parts)
-        elif not state.name or (is_correction(text) and guess_bare_name(text)):
-            guessed = guess_bare_name(text)
+        elif not state.name or (is_correction(text) and guess_bare_name(text, framed=True)):
+            framed = state.phase == "collect_name" or state.asked_field == "name"
+            guessed = guess_bare_name(text, framed=framed)
             if guessed and (state.phase == "collect_name" or not state.name or is_correction(text)):
                 if state.phase == "collect_name" or is_correction(text) or " " in guessed:
                     if not state.name or is_correction(text) or state.phase == "collect_name":
@@ -439,7 +458,8 @@ class Engine:
             state.phase = "collect_zip"
             return self._finish(
                 state,
-                self._line(state, "Which ZIP code is the property in?", "¿Cuál es el código postal de la propiedad?"),
+                self._address_prefix(state)
+                + self._line(state, "Which ZIP code is the property in?", "¿Cuál es el código postal de la propiedad?"),
                 started,
             )
         if self._area(state) == "no":
@@ -450,15 +470,22 @@ class Engine:
         if state.hazard:
             return self._escalate(state, started, state.hazard)
         preference = parse_preference(text, self.now)
+        if preference is not None and preference.unresolved:
+            state.phase = "offer"
+            state.offered = []
+            state.selected = None
+            return self._finish(state, "Which day did you mean?", started)
         if preference is not None and preference.day is not None:
             last = self.now + timedelta(days=self.config.horizon_days)
             if preference.day.date() > last.date():
+                named = f"{preference.day.strftime('%A, %B')} {preference.day.day}"
                 label = f"{last.strftime('%A, %B')} {last.day}"
                 state.phase = "offer"
                 state.offered = []
+                state.selected = None
                 return self._finish(
                     state,
-                    f"I can book up to {label}. What day before then works?",
+                    f"{named} is past my booking window. I can book up to {label}. What day before then works?",
                     started,
                 )
         if preference is not None:
@@ -496,9 +523,9 @@ class Engine:
         choice = match_offered(slots, text)
         if preference is not None and preference.around is not None and choice is None:
             choice = slots[0]
-        prefix = ""
+        prefix = self._address_prefix(state)
         if relaxed and preference is not None:
-            prefix = f"I don't have a {preference.label} opening. The next open windows are different. "
+            prefix += f"I don't have a {preference.label} opening. The next open windows are different. "
         if choice is not None and (preference is None or _choice_fits(choice, preference)):
             state.selected = choice.isoformat()
             state.phase = "confirm"
@@ -805,26 +832,59 @@ class Engine:
             say = f"{prefix} {say}"
         return self._finish(state, say, started, self._capture_events(state, "lead.callback"))
 
-    def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
-        """After two unclear tries, route the safety question. Do not show the menu again."""
+    def _answer_hazard_check(self, state: SessionState, raw: str, started: float) -> TurnResult:
+        """A no, a negation, or an ordinary answer does not page. A yes does."""
+        level_now, emergency_now = classify_emergency(raw)
+        if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
+            state.hazard = emergency_now
+            self._fill(state, raw)
+            return self._escalate(state, started, state.hazard)
+        affirmed = danger_affirmed(raw)
+        declined = is_negated_danger(raw) or (is_no(raw) and not affirmed) or (wants_callback(raw) and not affirmed)
+        if declined or not affirmed and not is_garbled(raw):
+            self._fill(state, raw)
+            state.degraded_asked = True
+            if state.language != "en":
+                return self._language_handoff(state, started)
+            state.phase = "discover"
+            return self._continue_intake(state, raw, started)
+        state.hazard = "Caller confirmed danger"
         self._fill(state, raw)
-        danger = bool(
-            re.search(r"\b(danger|hurt|injured|emergency|bleeding|unconscious|can't breathe|cant breathe)\b", raw, re.I)
-        )
-        wants_callback = bool(
-            re.search(r"\b(person|callback|call me|call back|human|someone call|ring me)\b", raw, re.I)
-        )
-        if danger or (is_yes(raw) and not wants_callback):
+        return self._escalate(state, started, state.hazard)
+
+    def _address_prefix(self, state: SessionState) -> str:
+        if state.address_from_prompt and state.address and not state.address_read_back:
+            state.address_read_back = True
+            return f"I have the address as {state.address}. "
+        return ""
+
+    def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
+        """After two unclear tries, one safety question. Negation and a callback do not page."""
+        self._fill(state, raw)
+        level_now, emergency_now = classify_emergency(raw)
+        if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
+            state.hazard = emergency_now
+            return self._escalate(state, started, state.hazard)
+        affirmed = danger_affirmed(raw)
+        declined = is_negated_danger(raw) or (is_no(raw) and not affirmed) or (wants_callback(raw) and not affirmed)
+        if declined:
+            return self._office_callback(state, started)
+        if affirmed:
             state.hazard = state.hazard or "Caller confirmed danger"
             return self._escalate(state, started, state.hazard)
-        if wants_callback or is_no(raw):
-            return self._office_callback(state, started)
         intent = detect_intent(raw)
         if intent not in {None, "unclear", "spam"}:
             state.intent = intent
             state.unclear_count = 0
             state.phase = "discover"
             return self._continue_intake(state, raw, started)
+        if state.safety_reasks < 1:
+            state.safety_reasks += 1
+            return self._finish(
+                state,
+                "I didn't catch that. Is anyone in danger right now, or should a person call you back?",
+                started,
+            )
         return self._office_callback(state, started)
 
     def _office_callback(self, state: SessionState, started: float) -> TurnResult:
@@ -873,7 +933,7 @@ class Engine:
                 f"Please stay on the line. If you smell gas, leave the house and call 911 or your gas company. "
                 f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
             )
-        if state.address and reason != "Caller requested a person":
+        if state.address and state.address_from_prompt and reason != "Caller requested a person":
             say += f" I have the service address as {state.address}."
         events = [
             {
@@ -1091,6 +1151,11 @@ def _choice_fits(choice: datetime | None, preference) -> bool:
         return False
     if preference.part == "afternoon" and not (12 <= choice.hour < 17):
         return False
+    if preference.part == "lunch":
+        from datetime import time as clock_time
+
+        if not (clock_time(11, 30) <= choice.time() <= clock_time(13, 30)):
+            return False
     if preference.part == "evening" and choice.hour < 16:
         return False
     return True

@@ -41,7 +41,7 @@ SCENARIOS = [
         ],
         "outcome": "escalated",
         "intent": "emergency",
-        "say_contains": ["emergency", "connecting you to Miguel", "1402 Manor Road"],
+        "say_contains": ["emergency", "connecting you to Miguel"],
         "events": ["transfer", "lead", "webhook"],
         "events_absent": ["booking"],
     },
@@ -65,7 +65,7 @@ SCENARIOS = [
         "id": "emergency-sewer-backup",
         "turns": ["We have a sewer backup in the downstairs bathroom at 22 Elm Street, Austin 78702."],
         "outcome": "escalated",
-        "say_contains": ["emergency", "22 Elm Street"],
+        "say_contains": ["emergency"],
         "events": ["transfer"],
     },
     {

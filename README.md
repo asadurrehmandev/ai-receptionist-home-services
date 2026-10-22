@@ -76,9 +76,9 @@ Each model call is capped at 5 seconds. The whole turn gives up at 8 seconds or 
 
 **Live Claude has not been measured.** Pytest never calls Anthropic. `python -m evals.live_claude` is the opt-in probe. With no key it exits 2 and reports nothing. The numbers below are the local detector and the scripted tool tests.
 
-Without voice keys, Twilio uses its own speech recognition and a spoken reply (`<Gather>` / `<Say>`). Three silent results hang up and ask the caller to call back. Emergencies return `<Dial>` with a 20-second timeout. If a second on-call number is set in the YAML, a no-answer tries that number once. If nobody answers, Riley gives guidance for the hazard on the call: leave and call 911 or the gas company, get everyone into fresh air for carbon monoxide, shut the main valve if it is safe for water, stay back and call 911 if there is smoke or fire for electrical, or keep a vulnerable person warm or cool and call 911 if they are unwell when the hazard is heat or cold. The missed transfer is saved as a lead with status `missed_transfer` and a `call.transfer_missed` webhook, and it sits at the top of the board with a red badge. Riley says the office will call back only when the on-call text was sent or that webhook was accepted. If Twilio SMS did not accept the page, Riley says no text was sent. Riley does not tell the caller to dial this shop number again. Gather is the path that actually dials. Media Streams turn on only when `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, and `TWILIO_AUTH_TOKEN` are all set. Without the account SID there is no way to speak a fallback, so the call stays on Gather. The stream URL has no token. TwiML passes a one-time HMAC in `<Parameter name="token">`, and the socket reads it from the start message `customParameters`. A replay is rejected. `DEMO_MODE=0` rejects a start message with no token. A speech or TTS error updates the live call with `<Say>` and `<Redirect>` back to Gather so intake continues. If that turn is already an emergency, the update is `<Dial>`, not `<Hangup>`. The stream flushes a turn on trailing silence. Until those keys exist, Gather remains the answering path.
+Without voice keys, Twilio uses its own speech recognition and a spoken reply (`<Gather>` / `<Say>`). Three silent results hang up and ask the caller to call back. Emergencies return `<Dial>` with a 20-second timeout. If a second on-call number is set in the YAML, a no-answer tries that number once. If nobody answers, Riley gives guidance for the hazard on the call: leave and call 911 or the gas company, get everyone into fresh air for carbon monoxide, shut the main valve if it is safe for water, stay back and call 911 if there is smoke or fire for electrical, or keep a vulnerable person warm or cool and call 911 if they are unwell when the hazard is heat or cold. The missed transfer is saved as a lead with status `missed_transfer` and a `call.transfer_missed` webhook, and it sits at the top of the board with a red badge. In demo mode Riley says the office will call back when the on-call text was sent or the webhook was accepted, including a mock delivery, because the board is showing the alert. With `DEMO_MODE=0`, a mock webhook is not a promise: Riley says the call was logged for the office and to call 911 if anyone is in danger, unless SMS was sent or the webhook status is `delivered`. If Twilio SMS did not accept the page, Riley says no text was sent. Riley does not tell the caller to dial this shop number again. Gather is the path that actually dials. Media Streams turn on only when `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `TWILIO_ACCOUNT_SID`, and `TWILIO_AUTH_TOKEN` are all set. Without the account SID there is no way to speak a fallback, so the call stays on Gather. The stream URL has no token. TwiML passes a one-time HMAC in `<Parameter name="token">`, and the socket reads it from the start message `customParameters`. A replay is rejected. `DEMO_MODE=0` rejects a start message with no token. A speech or TTS error updates the live call with `<Say>` and `<Redirect>` back to Gather so intake continues. If that turn is already an emergency, the update is `<Dial>`, not `<Hangup>`. The stream flushes a turn on trailing silence. Until those keys exist, Gather remains the answering path.
 
-`DEMO_MODE=0` will not start a call without `TWILIO_AUTH_TOKEN`. Voice webhooks and the media-stream socket return 503, `/api/health` sets `voice_ready` false and explains why, and an empty token does not make an unsigned webhook valid. The process itself stays up so the board can still sign in. Demo mode still accepts unsigned local requests. `/api/health` also reports `semantic_ready`. Compose treats a 503 as unhealthy, so a container whose hazard weights did not load does not go green. With the weights baked into the image and `HF_HUB_OFFLINE=1`, compose is healthy with no network.
+`DEMO_MODE=0` will not start a call without `TWILIO_AUTH_TOKEN`. Voice webhooks and the media-stream socket return 503, `/api/health` sets `voice_ready` false and explains why, and an empty token does not make an unsigned webhook valid. The process itself stays up so the board can still sign in. Demo mode still accepts unsigned local requests. `/api/health` also reports `semantic_ready`. Compose treats a 503 as unhealthy, so a container whose hazard weights did not load does not go green. With the weights baked into the image and `HF_HUB_OFFLINE=1`, compose is healthy with no network. If the weights are missing or corrupt, seeding is skipped and the process still starts. `/api/health` returns 503 with `semantic_ready` false. That is true with the default `SEED_ON_START=1`. In that degraded mode a gas smell still pages, and an ordinary drain call is not paged after the address.
 
 ## What was measured
 
@@ -108,31 +108,51 @@ After that, the embedder keeps the original text, the closest concept wins rathe
 
 That second score is this desk's own set. It is not a claim about any private caller list.
 
-`python -m evals.heldout` scores a second file, `evals/heldout_set.py`, written before the round-5 rule changes and then left alone. It is 97 lines (English class paraphrases plus a short Spanish slice). It is not the frozen 112 and not a reviewer's caller list.
+`python -m evals.heldout` scores `evals/heldout_set.py`. It was written before the round-5 rules. The rules were then changed while looking at its misses, so the second table is a development score, not a held-out score. The only held-out figure for this file is the first table. The sentences were not edited.
 
-Before those rule changes:
-
-| | Before the round-5 rules |
+| | Held-out, before the round-5 rules |
 | --- | ---: |
-| Held-out lines | 97 |
+| Lines | 97 |
 | Emergency recall | 28 / 48 |
 | Safety-question lines | 1 / 8 |
 | CO-battery advice | 4 / 5 |
 | Routine lines kept routine | 31 / 36 |
 | Routine false pages | 3 / 36 |
 
-After the class rules (ceiling and appliance water, sewage backing through a fixture, a sounding detector without the word CO, scorch, indoor rain, explicit negation, a finished repair, and an ask on a hedged non-gas cue). The held-out sentences were not edited:
-
-| | After the round-5 rules |
+| | Development set, after those rules |
 | --- | ---: |
-| Held-out lines | 97 |
+| Lines | 97 |
 | Emergency recall | 48 / 48 |
 | Safety-question lines | 7 / 8 |
 | CO-battery advice | 5 / 5 |
 | Routine lines kept routine | 36 / 36 |
 | Routine false pages | 0 / 36 |
 
-The one safety-question miss is "Possibly a gas smell, or maybe it is just the trash." A gas smell still pages, including when the caller hedges, because a caller who says they might smell gas has to reach on-call. The private caller list was not copied and was not re-run. Live Claude was not called.
+The safety-question miss on that development file is "Possibly a gas smell, or maybe it is just the trash." A test locks the behavior that a gas smell pages, including when the caller hedges. A test also locks that an after-hours rate question does not page.
+
+`python -m evals.unseen` scores `evals/unseen_set.py`, 58 lines written and scored before the round-6 class rules, then left unchanged. The first score is the held-out number. The second score is the same file after the rules. It is not an external review.
+
+| | Held-out, before the round-6 rules |
+| --- | ---: |
+| Lines | 58 |
+| Emergency recall | 17 / 36 |
+| Safety-question lines | 2 / 3 |
+| CO-battery advice | 1 / 1 |
+| Routine lines kept routine | 17 / 18 |
+| Routine false pages | 1 / 18 |
+
+| | Same file, after the round-6 rules |
+| --- | ---: |
+| Lines | 58 |
+| Emergency recall | 36 / 36 |
+| Safety-question lines | 3 / 3 |
+| CO-battery advice | 1 / 1 |
+| Routine lines kept routine | 18 / 18 |
+| Routine false pages | 0 / 18 |
+
+An external review of the previous build measured about two-thirds strict recall on its own unseen English paraphrases. This repo does not re-run that list. 36/36 above is not that number.
+
+Tests, not the tables, are what the desk claims: a gas smell pages, a fee or after-hours rate question does not, a date past the booking horizon is named and is not booked as today, and a missing hazard model returns 503 with `semantic_ready` false while `SEED_ON_START` stays on. The private caller list was not copied and was not re-run. Live Claude was not called.
 
 Live Claude was not called. There is no live tool-mode column. `follow_rules` is not in `TOOL_SPECS`.
 
@@ -140,7 +160,7 @@ Live Claude was not called. There is no live tool-mode column. `follow_rules` is
 
 Scripted guard tests, still without a live model, drop free-form text (a made-up afternoon, a made-up price, a discount, a "booked" claim). A cooperative script books only across two turns: the caller states the name, phone, and address and picks a window, then says yes to the read-back. An invented name or phone is not stored. "No" and a hedge do not book. An invented slot does not. A model-initiated `transfer` or `classify_hazard` on a faucet quote does not page. Cancel verification is stored on the booking. Three failures lock that booking, text the number on it when SMS is actually sent, and do not page on-call or read the emergency script. A later call with the right day is still refused. Separate tests cover accented names, Suite versus Apt, "ends in" and "at the end" phone corrections, a house-number correction read back at the offer, "ten-thirty," "the Tuesday after next," "afternoon except Friday," a date past the horizon, "first Monday in November," Halloween morning, "next week except Monday," and "half past" / "4ish."
 
-Pytest collects 173 tests. None of them call Anthropic.
+Pytest collects 184 tests. None of them call Anthropic.
 
 ## Screenshots
 
@@ -227,7 +247,8 @@ Environment variables are listed in `.env.example`. None are required for the lo
 - `backend/app/integrations.py` — Deepgram, ElevenLabs, Twilio SMS, and the signed CRM POST
 - `backend/tests` — scenarios, the copied v1 review file, and guard tests
 - `evals/fresh_set.py` — the frozen 112 lines written for this desk before tuning
-- `evals/heldout_set.py` — 97 lines written before the round-5 rules and left frozen
+- `evals/heldout_set.py` — 97 lines. 28/48 is the held-out score. 48/48 is the development score after the rules
+- `evals/unseen_set.py` — 58 lines written before the round-6 rules. 17/36 was the held-out score
 - `evals/live_claude.py` — opt-in live probe
 - `frontend` — dispatch board and call simulator
 - `config/business.yaml` — the sample plumbing and HVAC shop

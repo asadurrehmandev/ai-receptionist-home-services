@@ -48,7 +48,7 @@ EXISTING = re.compile(
 
 QUOTE = re.compile(
     r"\b(how much|how many|price|cost|estimate|quot\w*|ballpark|beat that|beat this|can you beat|"
-    r"cheapest|discount|waive|price match|cash price|bucks)\b",
+    r"cheapest|discount|waive|price match|cash price|bucks|after[- ]hours|\brate\b)\b",
     re.I,
 )
 
@@ -272,7 +272,9 @@ def detect_intent(text: str) -> str:
     if QUOTE.search(norm) or is_haggle(norm):
         return "quote"
     if SERVICE_PROBLEM.search(norm) or re.search(
-        r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it)\b",
+        r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it|"
+        r"install\w*|hook\s?up|hookup|thermostat|no power|dead outlet|outlet (?:is )?dead|puddle|dripp\w*|"
+        r"chilly|cold room|breaker tripped|tripped (?:the )?breaker|blank screen|tune[- ]?up)\b",
         norm,
     ):
         return "new_job"
@@ -308,6 +310,66 @@ def is_clean_yes(text: str) -> bool:
 
 def is_no(text: str) -> bool:
     return bool(NO.search(normalize(text)))
+
+
+_DANGER_WORD = re.compile(
+    r"\b(danger|hurt|injured|injury|emergency|unsafe|sick|bleeding|unconscious)\b",
+    re.I,
+)
+_NEGATION_NEAR = re.compile(
+    r"\b(no|not|nobody|no one|none|isn't|isnt|is not|aren't|arent|nothing|nobody's|nobodys)\b",
+    re.I,
+)
+
+
+def is_negated_danger(text: str) -> bool:
+    """True when the caller is saying the danger word does not apply."""
+    raw = text or ""
+    if re.search(
+        r"\b(?:we(?:'re| are)|everyone(?:'s| is)|everybody(?:'s| is))\s+(?:fine|ok|okay|safe)\b",
+        raw,
+        re.I,
+    ):
+        return True
+    for match in _DANGER_WORD.finditer(raw):
+        window = raw[max(0, match.start() - 48) : match.start()]
+        tokens = re.findall(r"[A-Za-z']+", window)
+        tail = " ".join(tokens[-4:]).lower()
+        if _NEGATION_NEAR.search(tail):
+            return True
+    return False
+
+
+def danger_affirmed(text: str) -> bool:
+    """A yes, or an unnegated danger word. 'Yes, call me back' still affirms."""
+    if is_negated_danger(text):
+        return False
+    if is_yes(text):
+        return True
+    for match in _DANGER_WORD.finditer(text or ""):
+        window = (text or "")[max(0, match.start() - 48) : match.start()]
+        tokens = re.findall(r"[A-Za-z']+", window)
+        tail = " ".join(tokens[-4:]).lower()
+        if not _NEGATION_NEAR.search(tail):
+            return True
+    return False
+
+
+def wants_callback(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(person|callback|call me|call back|human|someone call|ring me)\b",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def is_garbled(text: str) -> bool:
+    words = re.findall(r"[A-Za-z]{2,}", text or "")
+    if not words:
+        return True
+    return len(words) == 1 and len(words[0]) <= 2
 
 
 def wants_cancel(text: str) -> bool:
@@ -453,13 +515,24 @@ def house_correction(text: str) -> tuple[str, str] | None:
     return match.group(1), match.group(2)
 
 
-def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
-    source = text
-    if is_correction(text):
-        source = re.split(r"\b(?:actually|i meant|correction)\b", text, maxsplit=1, flags=re.I)[-1]
+_NOT_A_STREET = re.compile(r"\b(?:inside|outside|with|degrees?|years?|year-old)\b", re.I)
+
+
+def extract_street(text: str, cities: tuple[str, ...] = (), answering: bool = False) -> str | None:
+    """A street needs a suffix, unless this turn is the address answer.
+
+    A temperature or an age is never a street, even on the address question.
+    """
+    source = text or ""
+    if is_correction(source):
+        source = re.split(r"\b(?:actually|i meant|correction)\b", source, maxsplit=1, flags=re.I)[-1]
     match = STREET.search(source)
     if match and not re.search(r"\bat the end\b", match.group(1), re.I):
-        return _with_unit(_tidy_street(match.group(1)), source)
+        body = match.group(1)
+        if not _NOT_A_STREET.search(body):
+            return _with_unit(_tidy_street(body), source)
+    if not answering:
+        return None
     city_pattern = "|".join(re.escape(city) for city in cities) if cities else r"$^"
     loose = re.search(
         rf"\b(\d{{1,6}}\s+[A-Za-z][A-Za-z.'-]{{1,}}(?:\s+[A-Za-z][A-Za-z.'-]{{1,}}){{0,3}})"
@@ -470,6 +543,8 @@ def extract_street(text: str, cities: tuple[str, ...] = ()) -> str | None:
     if not loose:
         return None
     candidate = loose.group(1).strip(" ,.")
+    if _NOT_A_STREET.search(candidate):
+        return None
     if re.search(r"\b(yes|yeah|earliest|tomorrow|phone|number)\b", candidate, re.I):
         return None
     if re.search(r"\bat the end\b", candidate, re.I):
@@ -551,9 +626,13 @@ _APPLIANCE_WORD = re.compile(
 )
 
 
-def _name_allowed(candidate: str) -> bool:
+def _name_allowed(candidate: str, *, framed: bool = False) -> bool:
     if not _plausible_name(candidate):
         return False
+    if _APPLIANCE_WORD.search(candidate):
+        return False
+    if framed:
+        return True
     if _BRAND.search(candidate):
         return False
     last = candidate.split()[-1]
@@ -611,28 +690,43 @@ def extract_introduced_name(text: str) -> str | None:
     return candidate
 
 
-def guess_bare_name(text: str) -> str | None:
+def guess_bare_name(text: str, framed: bool = False) -> str | None:
+    """A name frame, or the answer to the name question, may use a brand or a street word."""
     introduced = extract_introduced_name(text)
-    if introduced and _name_allowed(introduced):
+    if introduced and _name_allowed(introduced, framed=True):
         return introduced
-    if _bare_name_blocked(text):
+    if extract_street(text) or extract_phone(text)[0] or extract_zip(text):
         return None
-    trailing = re.findall(r"\b([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\s+([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\b", text)
+    if not framed and _bare_name_blocked(text):
+        return None
+    if framed and _APPLIANCE_WORD.search(text or "") and introduced is None:
+        return None
+    trailing = re.findall(r"\b([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\s+([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\b", text or "")
     if trailing:
         first, last = trailing[-1]
         candidate = f"{first} {last}"
-        if _name_allowed(candidate):
+        if _name_allowed(candidate, framed=framed):
             return candidate
-    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in text).strip()
+    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in (text or "")).strip()
     parts = [part for part in cleaned.split() if part]
     if not 2 <= len(parts) <= 3:
         return None
     if any(part.lower() in NAME_STOP for part in parts):
         return None
     candidate = " ".join(_proper_token(part) for part in parts)
-    if not _name_allowed(candidate):
+    if not _name_allowed(candidate, framed=framed):
         return None
     return candidate
+
+
+def fallback_name(text: str) -> str:
+    """Last resort after two rejected name answers. Never ask a third time."""
+    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in (text or ""))
+    tokens = [part for part in cleaned.split() if part and part.lower() not in NAME_STOP and len(part) > 1]
+    if tokens:
+        return " ".join(_proper_token(part) for part in tokens[:3])
+    raw = " ".join((text or "").split())
+    return raw[:40] or "Caller"
 
 
 def extract_caller_name(turns: list[str], asked_field: str | None, current: str) -> str | None:
@@ -642,7 +736,7 @@ def extract_caller_name(turns: list[str], asked_field: str | None, current: str)
     donate a bare guess.
     """
     if asked_field == "name":
-        found = guess_bare_name(current)
+        found = guess_bare_name(current, framed=True)
         if found:
             return found
         found = _clean_pair(current)
@@ -650,7 +744,7 @@ def extract_caller_name(turns: list[str], asked_field: str | None, current: str)
             return found
     for turn in reversed(turns):
         introduced = extract_introduced_name(turn)
-        if introduced and _name_allowed(introduced):
+        if introduced and _name_allowed(introduced, framed=True):
             return introduced
     for turn in reversed(turns):
         if _bare_name_blocked(turn):

@@ -42,6 +42,7 @@ class Preference:
     earliest: time | None = None
     around: time | None = None
     exclude_weekdays: tuple[int, ...] = ()
+    unresolved: bool = False
 
     @property
     def label(self) -> str:
@@ -64,6 +65,7 @@ class Preference:
             and self.earliest is None
             and self.around is None
             and not self.exclude_weekdays
+            and not self.unresolved
         )
 
 
@@ -283,6 +285,14 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
         day = _midnight(now + timedelta(days=2))
     elif re.search(r"\b(?:two weeks from today|two weeks from now|in two weeks)\b", norm):
         day = _midnight(now + timedelta(days=14))
+    elif re.search(r"\bend of (?:the |this )?month\b", norm):
+        day, day_until = _end_of_month(now)
+    elif (ordinal := re.search(r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b(?!\s+one\b)", norm)) is not None:
+        day_num = int(ordinal.group(1))
+        if 1 <= day_num <= 31:
+            day = _next_day_of_month(now, day_num)
+        if day is None:
+            return Preference(unresolved=True)
     elif re.search(r"\bthis weekend\b", norm):
         delta = (5 - now.weekday()) % 7
         day = _midnight(now + timedelta(days=delta))
@@ -322,6 +332,8 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
     part = None
     if "after lunch" in norm or "afternoon" in norm:
         part = "afternoon"
+    elif re.search(r"\b(lunchtime|at lunch|during lunch)\b", norm):
+        part = "lunch"
     elif "morning" in norm:
         part = "morning"
     elif "evening" in norm or "tonight" in norm:
@@ -360,8 +372,50 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
         exclude_weekdays=excluded,
     )
     if preference.is_empty() and day_until is None:
+        if _DATE_HINT.search(norm) and not re.search(r"\bthe\s+\d{1,2}(?:st|nd|rd|th)\s+one\b", norm):
+            return Preference(unresolved=True)
         return None
     return preference
+
+
+def _next_day_of_month(now: datetime, day_num: int) -> datetime | None:
+    year, month = now.year, now.month
+    for _ in range(14):
+        try:
+            candidate = datetime(year, month, day_num, tzinfo=now.tzinfo)
+        except ValueError:
+            candidate = None
+        if candidate is not None and candidate.date() >= now.date():
+            return _midnight(candidate)
+        month += 1
+        if month == 13:
+            month = 1
+            year += 1
+    return None
+
+
+def _end_of_month(now: datetime) -> tuple[datetime, datetime]:
+    """The last three weekdays of the current month."""
+    if now.month == 12:
+        cursor = datetime(now.year + 1, 1, 1, tzinfo=now.tzinfo) - timedelta(days=1)
+    else:
+        cursor = datetime(now.year, now.month + 1, 1, tzinfo=now.tzinfo) - timedelta(days=1)
+    found: list[datetime] = []
+    while len(found) < 3:
+        if cursor.weekday() < 5:
+            found.append(_midnight(cursor))
+        cursor -= timedelta(days=1)
+    found.reverse()
+    return found[0], found[-1]
+
+
+_DATE_HINT = re.compile(
+    r"\b(the\s+\d{1,2}(?:st|nd|rd|th)|end of (?:the |this )?month|"
+    r"january|february|march|april|may|june|july|august|september|october|november|december|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|next week|"
+    r"in \d+ weeks|week from)\b",
+    re.I,
+)
 
 
 def _part_ok(moment: datetime, preference: Preference | None) -> bool:
@@ -378,6 +432,8 @@ def _part_ok(moment: datetime, preference: Preference | None) -> bool:
         return 12 <= hour < 17
     if preference.part == "evening":
         return hour >= 16
+    if preference.part == "lunch":
+        return time(11, 30) <= moment.time() <= time(13, 30)
     return True
 
 

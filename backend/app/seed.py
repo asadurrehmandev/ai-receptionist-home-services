@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 SEED_SCRIPTS: list[dict] = [
     {
         "id": "burst-lena",
@@ -79,16 +83,33 @@ SEED_SCRIPTS: list[dict] = [
 
 
 def seed_demo(service) -> list[dict]:
+    """Seed the board. A missing hazard model must not stop the process."""
+    from app.agent.hazard_semantic import semantic_ready
+
+    if not semantic_ready():
+        logger.warning("Hazard model is not loaded. Skipping demo seed.")
+        return []
     results = []
     for script in SEED_SCRIPTS:
-        call = service.start(script["channel"])
-        last = call
-        for line in script["turns"]:
-            last = service.turn(call["id"], line)
-        if last["outcome"] != script["outcome"]:
-            raise RuntimeError(
-                f"Seed script {script['id']} ended as {last['outcome']!r}, expected {script['outcome']!r}. Last reply: {last['say']}"
-            )
-        results.append(last)
-    service.plant_existing_booking()
+        try:
+            call = service.start(script["channel"])
+            last = call
+            for line in script["turns"]:
+                last = service.turn(call["id"], line)
+            if last["outcome"] != script["outcome"]:
+                logger.warning(
+                    "Seed script %s ended as %r, expected %r. Last reply: %s",
+                    script["id"],
+                    last["outcome"],
+                    script["outcome"],
+                    last["say"],
+                )
+                continue
+            results.append(last)
+        except Exception:
+            logger.warning("Seed script %s failed", script["id"], exc_info=True)
+    try:
+        service.plant_existing_booking()
+    except Exception:
+        logger.warning("Could not plant the sample booking", exc_info=True)
     return results

@@ -332,7 +332,10 @@ class Dialog:
         turns = _caller_turns(state, utterance)
         name = extract_caller_name(turns, state.asked_field, utterance)
         phone = _first(turns, lambda text: extract_phone(text)[0])
-        street = _first(turns, lambda text: extract_street(text, self.engine.config.cities))
+        cities = self.engine.config.cities
+        street = extract_street(utterance, cities, answering=state.asked_field == "address")
+        if not street:
+            street = _first(turns, lambda text: extract_street(text, cities))
         unit = _first(turns, extract_unit)
         if street and unit and unit.lower() not in street.lower():
             street = f"{street} {unit}"
