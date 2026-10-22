@@ -99,6 +99,9 @@ class TurnResult:
     say: str
     events: list[dict]
     latency_ms: float
+    reply_source: str = "demo"
+    mode_note: str | None = None
+    llm_provider: str | None = None
 
 
 _BATTERY_EN = (

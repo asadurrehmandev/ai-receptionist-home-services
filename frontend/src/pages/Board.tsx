@@ -37,7 +37,7 @@ export function Board() {
     { label: "Calls handled", value: String(data.total_calls), note: "Simulator and phone" },
     { label: "Jobs booked", value: String(booked), note: "On the mock calendar" },
     { label: "Escalated", value: String(escalated), note: `To ${data.on_call.name}` },
-    { label: "Median reply", value: formatMs(data.metrics.p50_ms), note: `end to end · p95 ${formatMs(data.metrics.p95_ms)}` },
+    { label: "Median reply", value: formatMs(data.metrics.p50_ms), note: `Demo mode · end to end · p95 ${formatMs(data.metrics.p95_ms)}` },
   ];
 
   return (
@@ -49,8 +49,9 @@ export function Board() {
           </p>
           <h1 className="mt-1 font-display text-4xl leading-none text-ink">The line is covered.</h1>
           <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-            {data.business.agent_name} answers {data.business.name}, qualifies the job, and either books a 90-minute
-            window or puts {data.on_call.name} on the call. Missed calls after close used to walk out the door.
+            Runs out of the box in Demo mode with sample responses; paste your own Anthropic or OpenAI key (never
+            stored) to test the live AI. {data.business.agent_name} answers {data.business.name}, qualifies the job,
+            and either books a 90-minute window or puts {data.on_call.name} on the call.
           </p>
         </div>
         <div className="text-right text-sm text-muted-foreground">

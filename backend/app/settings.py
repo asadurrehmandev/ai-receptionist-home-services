@@ -17,6 +17,8 @@ class Settings:
     seed_on_start: bool = True
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-sonnet-5-5"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4.1"
     deepgram_api_key: str | None = None
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
@@ -37,7 +39,16 @@ class Settings:
 
     @property
     def llm_ready(self) -> bool:
-        return bool(self.anthropic_api_key or self.model_client)
+        return bool(self.anthropic_api_key or self.openai_api_key or self.model_client)
+
+    @property
+    def env_llm_provider(self) -> str | None:
+        """A key from the environment, for a self-hosted desk. Not a visitor key."""
+        if self.anthropic_api_key:
+            return "anthropic"
+        if self.openai_api_key:
+            return "openai"
+        return None
 
 
 def settings_from_env() -> Settings:
@@ -54,6 +65,8 @@ def settings_from_env() -> Settings:
         seed_on_start=os.environ.get("SEED_ON_START", "1") != "0",
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
         anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY") or None,
+        openai_model=os.environ.get("OPENAI_MODEL", "gpt-4.1"),
         deepgram_api_key=os.environ.get("DEEPGRAM_API_KEY") or None,
         elevenlabs_api_key=os.environ.get("ELEVENLABS_API_KEY") or None,
         elevenlabs_voice_id=os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),

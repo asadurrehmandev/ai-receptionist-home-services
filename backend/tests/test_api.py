@@ -47,6 +47,8 @@ def test_health_reports_rule_brain(client):
     assert body["understand_ready"] is False
     assert body["degraded"] == []
     assert body["llm"] is False
+    assert body["reply_mode"] == "demo"
+    assert body["llm_provider"] is None
     assert body["media_stream_ready"] is False
     assert "Northline" in body["business"]
 

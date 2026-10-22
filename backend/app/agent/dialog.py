@@ -32,6 +32,7 @@ from app.agent.scheduling import available_slots, format_slot, join_slots, match
 from app.agent.nlu import FIELD_PHASES
 from app.agent.understand import assess_caller_turn, understand_enabled
 from app.agent.speech import EMPATHY_IDS, FIELDS, INTENTS, render
+from app.llm.keys import LlmRefused
 
 TOOL_SPECS = [
     {
@@ -157,23 +158,28 @@ class Dialog:
         self.engine = engine
         self.model = model
 
-    def handle(self, state: SessionState, text: str) -> TurnResult:
+    def handle(self, state: SessionState, text: str, model=None) -> TurnResult:
         raw = text or ""
+        active = self.model if model is None else model
         detected = detect_language(raw)
         if state.language == "en" and detected != "en":
             state.language = detected
         state.turn_selected = state.selected if state.phase == "confirm" else None
-        if state.phase in FIELD_PHASES:
+        # Safety questions and field collection stay on the rules, even with a key.
+        if state.phase in FIELD_PHASES or state.phase in {"hazard_check", "unclear_handoff", "closed"}:
             return self.engine.handle(state, raw)
         local = assess_caller_turn(raw)
         remote = ("none", None)
         if (
             not understand_enabled()
-            and self.model is not None
+            and active is not None
             and _RANK.get(local[0], 0) >= _RANK["ask"]
             and local[0] != "definite"
         ):
-            remote = _claude_hazard(self.model, raw)
+            try:
+                remote = _claude_hazard(active, raw)
+            except LlmRefused as refused:
+                return _demo_fallback(self.engine.handle(state, raw), str(refused))
         level, label = _raise_hazard(local, remote)
         if (
             level == "definite"
@@ -193,18 +199,23 @@ class Dialog:
             or state.language != "en"
         ):
             return self.engine.handle(state, raw)
-        if self.model is None:
+        if active is None:
             return self.engine.handle(state, raw)
         try:
-            result = self._model_turn(state, raw)
+            result = self._model_turn(state, raw, active)
+        except LlmRefused as refused:
+            return _demo_fallback(self.engine.handle(state, raw), str(refused))
         except Exception:
             result = self.engine.handle(state, raw)
+        else:
+            result.reply_source = "live"
+            result.llm_provider = getattr(active, "provider", None)
         _remember(state, raw, result.say)
         if result.say:
             state.last_reply = result.say
         return result
 
-    def _model_turn(self, state: SessionState, text: str) -> TurnResult:
+    def _model_turn(self, state: SessionState, text: str, model) -> TurnResult:
         deadline = monotonic() + TURN_BUDGET_S
         summary = {
             "phase": state.phase,
@@ -232,7 +243,7 @@ class Dialog:
             remaining = deadline - monotonic()
             if remaining <= 0.3:
                 break
-            response = self.model.complete(messages, TOOL_SPECS, timeout=min(CALL_TIMEOUT_S, remaining))
+            response = model.complete(messages, TOOL_SPECS, timeout=min(CALL_TIMEOUT_S, remaining))
             content = response.get("content") or []
             messages.append({"role": "assistant", "content": content})
             tool_uses = [block for block in content if block.get("type") == "tool_use"]
@@ -456,6 +467,16 @@ def _customer_ready(engine: Engine, state: SessionState) -> bool:
     return engine._area(state) == "ok"
 
 
+def _demo_fallback(result: TurnResult, note: str) -> TurnResult:
+    result.reply_source = "demo"
+    result.llm_provider = None
+    if "refused" in (note or "").lower() or "quota" in (note or "").lower():
+        result.mode_note = "That key was refused or has no quota. This reply is a sample response from the demo."
+    else:
+        result.mode_note = "The live model could not be reached. This reply is a sample response from the demo."
+    return result
+
+
 def _claude_hazard(model, text: str) -> tuple[str, str | None]:
     """Ask the model to classify. Unparseable output counts as no hazard."""
     try:
@@ -470,6 +491,8 @@ def _claude_hazard(model, text: str) -> tuple[str, str | None]:
             [_HAZARD_SPEC],
             timeout=2.5,
         )
+    except LlmRefused:
+        raise
     except Exception:
         return "none", None
     for block in response.get("content") or []:

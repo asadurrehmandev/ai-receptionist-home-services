@@ -21,6 +21,7 @@ from app.agent.hazard_semantic import semantic_ready
 from app.agent.understand import classifier_mode, understand_ready, understander_name
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
+from app.llm.keys import redacted
 from app.seed import seed_demo
 from app.service import ReceptionService
 from app.settings import Settings, settings_from_env
@@ -55,6 +56,17 @@ class TurnIn(BaseModel):
     text: str = Field(max_length=2000)
 
 
+def _session_llm(request: Request) -> tuple[str | None, str | None]:
+    """Read a visitor key from headers. Never log the header map."""
+    key = (request.headers.get("x-llm-key") or "").strip()
+    hinted = (request.headers.get("x-llm-provider") or "").strip().lower()
+    if hinted not in {"anthropic", "openai"}:
+        hinted = None
+    if not key:
+        return None, None
+    return key, hinted
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or settings_from_env()
     config = load_business(settings.config_path)
@@ -87,7 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=list(settings.cors_origins),
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-LLM-Key", "X-LLM-Provider"],
     )
     app.state.settings = settings
     app.state.config = config
@@ -108,10 +120,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "tts": bool(settings.elevenlabs_api_key),
             "twilio_signature": bool(settings.twilio_auth_token),
             "media_stream_ready": settings.media_stream_ready,
-            "brain": "claude-tools" if settings.llm_ready else "rules",
+            "brain": "claude-tools" if settings.env_llm_provider == "anthropic" else (
+                "openai-tools" if settings.env_llm_provider == "openai" else "rules"
+            ),
             "classifier": classifier_mode(),
             "demo_mode": settings.demo_mode,
-            "model": settings.anthropic_model if settings.llm_ready else None,
+            "model": (
+                settings.anthropic_model
+                if settings.env_llm_provider == "anthropic"
+                else settings.openai_model
+                if settings.env_llm_provider == "openai"
+                else None
+            ),
+            "reply_mode": "live" if settings.env_llm_provider else "demo",
+            "llm_provider": settings.env_llm_provider,
             "voice_ready": _voice_block_reason() is None,
             "voice_block_reason": _voice_block_reason(),
             "semantic_ready": semantic,
@@ -196,10 +218,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return service.start("simulator")
 
     @app.post("/api/demo/calls/{call_id}/turns")
-    def demo_turn(call_id: str, body: TurnIn):
+    def demo_turn(call_id: str, body: TurnIn, request: Request):
         _require_demo()
+        session_key, session_provider = _session_llm(request)
         try:
-            return service.turn(call_id, body.text)
+            with redacted(session_key):
+                return service.turn(
+                    call_id,
+                    body.text,
+                    session_key=session_key,
+                    session_provider=session_provider,
+                )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Call not found") from exc
 
@@ -563,7 +592,7 @@ def _mount_spa(app: FastAPI, static_dir) -> None:
 
     @app.get("/", include_in_schema=False)
     def spa_index():
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_files(full_path: str):

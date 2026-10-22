@@ -1,6 +1,8 @@
 import { Mic, Send } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { KeySettings } from "@/components/KeySettings";
+import { ModeBadge } from "@/components/ModeBadge";
 import { ErrorState } from "@/components/States";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,8 +11,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { api, type DemoTurn } from "@/lib/api";
 import { formatMs, formatPhone } from "@/lib/format";
 import { SCRIPTS } from "@/lib/scripts";
+import { getSession, isLive } from "@/lib/sessionKey";
 
-type Bubble = { role: "agent" | "caller"; text: string; latency_ms?: number | null };
+type Bubble = {
+  role: "agent" | "caller";
+  text: string;
+  latency_ms?: number | null;
+  thinking?: boolean;
+  streaming?: boolean;
+};
 
 const PHASE_LABEL: Record<string, string> = {
   discover: "Listening",
@@ -51,17 +60,51 @@ export function Simulator() {
   const [error, setError] = useState<string | null>(null);
   const [speechNote, setSpeechNote] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
+  const generation = useRef(0);
   const script = SCRIPTS.find((item) => item.id === scriptId) || SCRIPTS[0];
 
+  async function typeReply(text: string, latency?: number | null) {
+    const token = ++generation.current;
+    const thinking = isLive() ? "Asking the live model…" : "Checking the shop rules…";
+    setBubbles((current) => [...current, { role: "agent", text: thinking, thinking: true, latency_ms: latency }]);
+    await wait(900);
+    if (generation.current !== token) return;
+    const words = text.split(/(\s+)/);
+    let shown = "";
+    for (const word of words) {
+      if (generation.current !== token) return;
+      shown += word;
+      const partial = shown;
+      setBubbles((current) => {
+        const next = current.slice();
+        const last = next[next.length - 1];
+        if (last?.role === "agent") {
+          next[next.length - 1] = { role: "agent", text: partial, streaming: true, latency_ms: latency };
+        }
+        return next;
+      });
+      await wait(word.trim() ? 70 : 0);
+    }
+    if (generation.current !== token) return;
+    setBubbles((current) => {
+      const next = current.slice();
+      const last = next[next.length - 1];
+      if (last?.role === "agent") next[next.length - 1] = { role: "agent", text, streaming: false, latency_ms: latency };
+      return next;
+    });
+    speak(text, () => setSpeaking(true), () => setSpeaking(false));
+  }
+
   async function begin() {
+    generation.current += 1;
     const started = await api.startCall();
     setCallId(started.id);
-    setBubbles([{ role: "agent", text: started.say, latency_ms: started.latency_ms }]);
+    setBubbles([]);
     setTurn(started);
     setEvents([]);
     setCursor(0);
     setError(null);
-    speak(started.say, () => setSpeaking(true), () => setSpeaking(false));
+    await typeReply(started.say, started.latency_ms);
     return started;
   }
 
@@ -79,10 +122,9 @@ export function Simulator() {
     if (!activeId || !trimmed) return null;
     setBubbles((current) => [...current, { role: "caller", text: trimmed }]);
     const result = await api.sendTurn(activeId, trimmed);
-    setBubbles((current) => [...current, { role: "agent", text: result.say, latency_ms: result.latency_ms }]);
     setTurn(result);
     setEvents((current) => [...current, ...result.events]);
-    speak(result.say, () => setSpeaking(true), () => setSpeaking(false));
+    await typeReply(result.say, result.latency_ms);
     return result;
   }
 
@@ -169,12 +211,16 @@ export function Simulator() {
           <p className="text-xs font-medium uppercase tracking-[0.16em] text-copper">No Twilio account required</p>
           <h1 className="mt-1 font-display text-4xl">Call simulator</h1>
           <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-            Talk with the browser’s microphone or type as the homeowner. Riley answers with the same brain the Twilio
-            webhook uses. Without an Anthropic key, that brain is the rule receptionist. With a key, Claude is asked
-            to book through the calendar tools. A time, price, or discount has to match a tool result.
+            Talk with the browser’s microphone or type as the homeowner. With no key, Riley answers from the shop
+            rules. Paste a key in the session settings and the same rules still run first; the model can only add a
+            tool call. A time, a price, or a transfer still has to match the server.
           </p>
         </div>
+        <KeySettings label="Session key" />
       </header>
+      {getSession().note && (
+        <p className="rounded-md border border-[#e6d3a4] bg-[#f8ecd9] px-3 py-2 text-sm text-[#6b4a10]">{getSession().note}</p>
+      )}
 
       <div className="grid items-start gap-4 xl:grid-cols-[240px_minmax(320px,420px)_minmax(260px,1fr)]">
         <aside className="space-y-2">
@@ -212,7 +258,7 @@ export function Simulator() {
           <div className="phone-screen">
             <div className="flex items-center justify-between border-b border-[#e6dfd4] px-4 py-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.16em] text-copper">Live call</div>
+                <ModeBadge compact />
                 <div className="text-sm font-medium">Northline Plumbing</div>
               </div>
               <div className="text-right">
@@ -239,19 +285,24 @@ export function Simulator() {
             {turn?.outcome === "spam" && (
               <div className="bg-[#f8ecd9] px-4 py-2 text-sm text-[#8a5a12]">Closed as a sales call.</div>
             )}
-            <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+            <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-4 py-4" aria-live="polite">
               {bubbles.map((bubble, index) => (
                 <div key={`${bubble.role}-${index}`} className={bubble.role === "caller" ? "ml-8" : "mr-8"}>
                   <div className="text-[10px] uppercase tracking-wide text-[#8a8175]">
-                    {bubble.role === "caller" ? "Caller" : "Riley"}
-                    {bubble.latency_ms != null ? ` · ${formatMs(bubble.latency_ms)}` : ""}
+                    {bubble.role === "caller" ? "Caller" : bubble.thinking ? "Riley" : "Riley"}
+                    {!bubble.thinking && bubble.latency_ms != null ? ` · ${formatMs(bubble.latency_ms)}` : ""}
                   </div>
                   <p
                     className={`mt-1 rounded-2xl px-3 py-2 text-sm leading-6 ${
-                      bubble.role === "caller" ? "bg-[#1c1915] text-[#f4efe6]" : "bg-white"
+                      bubble.role === "caller"
+                        ? "bg-[#1c1915] text-[#f4efe6]"
+                        : bubble.thinking
+                          ? "bg-white text-[#8a8175]"
+                          : "bg-white"
                     }`}
                   >
                     {bubble.text}
+                    {bubble.streaming && <span className="caret" aria-hidden />}
                   </p>
                 </div>
               ))}

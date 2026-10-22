@@ -1,3 +1,5 @@
+import { getSession, noteRefusal, resolvedProvider } from "@/lib/sessionKey";
+
 export type OutcomeCounts = Record<string, number>;
 
 export type CallSummary = {
@@ -95,6 +97,8 @@ export type Health = {
   media_stream_ready: boolean;
   brain: string;
   demo_mode?: boolean;
+  reply_mode?: "demo" | "live";
+  llm_provider?: string | null;
 };
 
 export type PublicConfig = {
@@ -131,6 +135,9 @@ export type DemoTurn = {
   };
   offered: string[];
   events: { type: string; payload: Record<string, unknown> }[];
+  reply_source?: "demo" | "live";
+  mode_note?: string | null;
+  llm_provider?: string | null;
 };
 
 export function adminToken(): string {
@@ -144,13 +151,14 @@ export function setAdminToken(token: string) {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = adminToken();
+  const { headers: extraHeaders, ...rest } = init || {};
   const response = await fetch(path, {
+    ...rest,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers || {}),
+      ...(extraHeaders || {}),
     },
-    ...init,
   });
   if (response.status === 401) {
     setAdminToken("");
@@ -173,8 +181,23 @@ export const api = {
   config: () => request<PublicConfig>("/api/config"),
   health: () => request<Health>("/api/health"),
   startCall: () => request<DemoTurn>("/api/demo/calls", { method: "POST" }),
-  sendTurn: (id: string, text: string) =>
-    request<DemoTurn>(`/api/demo/calls/${id}/turns`, { method: "POST", body: JSON.stringify({ text }) }),
+  sendTurn: (id: string, text: string) => {
+    const session = getSession();
+    const provider = resolvedProvider(session);
+    const headers: Record<string, string> = {};
+    if (session.key && provider) {
+      headers["X-LLM-Key"] = session.key;
+      headers["X-LLM-Provider"] = provider;
+    }
+    return request<DemoTurn>(`/api/demo/calls/${id}/turns`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+      headers,
+    }).then((result) => {
+      if (result.mode_note) noteRefusal(result.mode_note);
+      return result;
+    });
+  },
   reset: () => request<{ ok: boolean; calls: number }>("/api/admin/reset", { method: "POST" }),
   replay: (id: number) => request<{ status: string; detail?: string }>(`/api/events/${id}/replay`, { method: "POST" }),
 };

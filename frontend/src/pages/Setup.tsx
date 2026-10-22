@@ -36,7 +36,7 @@ export function Setup() {
   if (!config) return <Loading label="Reading the shop profile…" />;
 
   const checks = [
-    ["Claude tool-calling", config.runtime.llm],
+    ["Env model key", config.runtime.llm],
     ["Deepgram speech-to-text", config.runtime.stt],
     ["ElevenLabs voice", config.runtime.tts],
     ["Twilio signature check", config.runtime.twilio_signature],
@@ -51,7 +51,11 @@ export function Setup() {
           <h1 className="mt-1 font-display text-4xl">{config.business.name}</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             {config.business.agent_name} covers {config.business.trade.toLowerCase()} in {config.business.city}. The
-            sample rules are for plumbing and HVAC. Brain right now: {config.runtime.brain}. Calls and leads are kept{" "}
+            sample rules are for plumbing and HVAC.{" "}
+            {config.runtime.reply_mode === "live"
+              ? `Live model from the environment (${config.runtime.llm_provider}).`
+              : "Demo mode: replies come from the shop rules, not from Claude or GPT."}{" "}
+            Calls and leads are kept{" "}
             {30} days, then purged.
           </p>
         </div>

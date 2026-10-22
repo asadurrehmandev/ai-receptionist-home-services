@@ -14,6 +14,8 @@ from app.agent.scheduling import available_slots, format_slot
 from app.config_loader import BusinessConfig
 from app.integrations import deliver_webhook, enqueue_webhook, send_sms
 from app.llm.claude import ClaudeClient
+from app.llm.keys import build_session_client
+from app.llm.openai_client import OpenAIClient
 from app.store import Store, StoreCalendar
 
 
@@ -43,6 +45,8 @@ class ReceptionService:
         model = settings.model_client
         if model is None and settings.anthropic_api_key:
             model = ClaudeClient(settings.anthropic_api_key, settings.anthropic_model)
+        elif model is None and settings.openai_api_key:
+            model = OpenAIClient(settings.openai_api_key, settings.openai_model)
         self.engine.sms_sender = lambda phone, body: send_sms(settings, phone, body)
         self.dialog = Dialog(self.engine, model)
         self._guard = threading.Lock()
@@ -66,7 +70,14 @@ class ReceptionService:
         self.store.save_state(call_id, state, ended=False, ended_at=None)
         return self._public(call_id, result.say, result, state)
 
-    def turn(self, call_id: str, text: str, caller_id: str | None = None) -> dict:
+    def turn(
+        self,
+        call_id: str,
+        text: str,
+        caller_id: str | None = None,
+        session_key: str | None = None,
+        session_provider: str | None = None,
+    ) -> dict:
         text = (text or "")[:2000]
         wall = perf_counter()
         with self._lock_for(call_id):
@@ -82,7 +93,11 @@ class ReceptionService:
                 return cached
             now = self.clock.now()
             self.store.add_turn(call_id, "caller", text, None, now)
-            result = self.dialog.handle(state, text)
+            # A visitor key is built for this turn and dropped. It is not saved on the service.
+            ephemeral = None
+            if session_key:
+                ephemeral = build_session_client(session_key, session_provider, self.settings)
+            result = self.dialog.handle(state, text, model=ephemeral)
             state.last_caller_text = text
             engine_ms = result.latency_ms
             result.latency_ms = (perf_counter() - wall) * 1000
@@ -141,6 +156,9 @@ class ReceptionService:
             "offered": offered,
             "events": result.events,
             "language": state.language,
+            "reply_source": getattr(result, "reply_source", "demo"),
+            "mode_note": getattr(result, "mode_note", None),
+            "llm_provider": getattr(result, "llm_provider", None),
         }
 
     def plant_existing_booking(self) -> dict | None:

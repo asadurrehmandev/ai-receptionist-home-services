@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import httpx
 
+from app.llm.keys import LlmRefused
+
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-sonnet-5-5"
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -34,6 +36,7 @@ class ClaudeClient:
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, client: httpx.Client | None = None) -> None:
         self.api_key = api_key
         self.model = model or DEFAULT_MODEL
+        self.provider = "anthropic"
         self._client = client
 
     def complete(self, messages: list, tools: list, timeout: float | None = None) -> dict:
@@ -55,8 +58,14 @@ class ClaudeClient:
                     "messages": messages,
                 },
             )
+            if response.status_code in {401, 403, 429, 402}:
+                raise LlmRefused("The key was refused or has no quota.")
             response.raise_for_status()
             body = response.json()
+        except LlmRefused:
+            raise
+        except httpx.HTTPError:
+            raise LlmRefused("The model could not be called.") from None
         finally:
             if own:
                 client.close()

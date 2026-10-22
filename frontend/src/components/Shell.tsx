@@ -1,6 +1,8 @@
 import { CalendarDays, LayoutDashboard, PhoneCall, Settings2, SquareUser, Waves } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 
+import { KeySettings } from "@/components/KeySettings";
+import { ModeBadge } from "@/components/ModeBadge";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
@@ -50,6 +52,10 @@ export function Shell() {
         </div>
       </aside>
       <main className="min-w-0 px-4 py-5 md:px-8 md:py-7">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <ModeBadge />
+          <KeySettings />
+        </div>
         <Outlet />
       </main>
     </div>
