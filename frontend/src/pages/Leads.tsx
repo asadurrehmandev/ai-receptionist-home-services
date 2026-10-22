@@ -53,6 +53,11 @@ export function Leads() {
           <TabsTrigger value="hooks">Webhooks</TabsTrigger>
         </TabsList>
         <TabsContent value="leads">
+          {leads.some((lead) => lead.status === "missed_transfer") && (
+            <div className="border-b border-[#e7c7c2] bg-[#f8e4e1] px-4 py-3 text-sm text-[#9d2c2c]">
+              A transfer was missed. These callers are waiting on a callback from the office.
+            </div>
+          )}
           {leads.length === 0 ? (
             <Empty title="No leads yet" body="A booked job or an escalation creates one." />
           ) : (

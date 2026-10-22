@@ -515,7 +515,9 @@ class Store:
                     "payload": json.loads(row["payload_json"]),
                 }
             )
-        return leads
+        missed = [item for item in leads if item["status"] == "missed_transfer"]
+        rest = [item for item in leads if item["status"] != "missed_transfer"]
+        return missed + rest
 
     def list_events(self, event_type: str | None = None) -> list[dict]:
         with self._lock:

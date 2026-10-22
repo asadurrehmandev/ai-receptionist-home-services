@@ -539,9 +539,54 @@ def _plausible_name(value: str) -> bool:
     return True
 
 
+_BRAND = re.compile(
+    r"\b(bradford|rheem|navien|rinnai|whirlpool|kenmore|carrier|trane|lennox|goodman|"
+    r"ruud|noritz|honeywell|ecobee|ao smith|american standard)\b",
+    re.I,
+)
+_APPLIANCE_WORD = re.compile(
+    r"\b(water heater|furnace|dishwasher|refrigerator|fridge|washer|dryer|thermostat|"
+    r"boiler|compressor|condenser|disposal|toilet|faucet|heater)\b",
+    re.I,
+)
+
+
+def _name_allowed(candidate: str) -> bool:
+    if not _plausible_name(candidate):
+        return False
+    if _BRAND.search(candidate):
+        return False
+    last = candidate.split()[-1]
+    if re.fullmatch(STREET_SUFFIX, last, flags=re.I):
+        return False
+    return True
+
+
+def _bare_name_blocked(text: str) -> bool:
+    """A street, a phone, a ZIP, a brand, or an appliance is not a caller's name."""
+    if extract_street(text):
+        return True
+    if extract_phone(text)[0]:
+        return True
+    if extract_zip(text):
+        return True
+    if _BRAND.search(text) or _APPLIANCE_WORD.search(text):
+        return True
+    return False
+
+
+def _clean_pair(text: str) -> str | None:
+    pairs = re.findall(r"\b([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\s+([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\b", text)
+    for first, last in pairs:
+        candidate = f"{first} {last}"
+        if _name_allowed(candidate) and not _APPLIANCE_WORD.search(candidate):
+            return candidate
+    return None
+
+
 def extract_introduced_name(text: str) -> str | None:
     match = re.search(
-        r"\b(?:my name is|this is|i am|i'm|im)\s+([^\W\d_](?:[^\W\d_]|['-])*(?:\s+[^\W\d_](?:[^\W\d_]|['-])*){0,3})",
+        r"\b(?:my name is|this is|i am|i'm|im|it is|it's)\s+([^\W\d_](?:[^\W\d_]|['-])*(?:\s+[^\W\d_](?:[^\W\d_]|['-])*){0,3})",
         text,
         re.I,
     )
@@ -549,7 +594,7 @@ def extract_introduced_name(text: str) -> str | None:
         return None
     chunk = match.group(1)
     chunk = re.split(
-        r"\b(?:and|but|at|from|in|on|my|calling|need|have|with|the|phone|i|please|cancel|reschedule|appointment|about|number)\b",
+        r"\b(?:and|but|at|from|in|on|my|calling|need|have|with|the|phone|i|please|cancel|reschedule|appointment|about|number|not)\b",
         chunk,
         maxsplit=1,
         flags=re.I,
@@ -568,13 +613,15 @@ def extract_introduced_name(text: str) -> str | None:
 
 def guess_bare_name(text: str) -> str | None:
     introduced = extract_introduced_name(text)
-    if introduced:
+    if introduced and _name_allowed(introduced):
         return introduced
+    if _bare_name_blocked(text):
+        return None
     trailing = re.findall(r"\b([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\s+([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\b", text)
     if trailing:
         first, last = trailing[-1]
         candidate = f"{first} {last}"
-        if _plausible_name(candidate):
+        if _name_allowed(candidate):
             return candidate
     cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in text).strip()
     parts = [part for part in cleaned.split() if part]
@@ -583,9 +630,35 @@ def guess_bare_name(text: str) -> str | None:
     if any(part.lower() in NAME_STOP for part in parts):
         return None
     candidate = " ".join(_proper_token(part) for part in parts)
-    if not _plausible_name(candidate):
+    if not _name_allowed(candidate):
         return None
     return candidate
+
+
+def extract_caller_name(turns: list[str], asked_field: str | None, current: str) -> str | None:
+    """Name comes from the answer to the name prompt, or from an introduction.
+
+    A turn that is a street, a phone, a ZIP, a brand, or an appliance does not
+    donate a bare guess.
+    """
+    if asked_field == "name":
+        found = guess_bare_name(current)
+        if found:
+            return found
+        found = _clean_pair(current)
+        if found:
+            return found
+    for turn in reversed(turns):
+        introduced = extract_introduced_name(turn)
+        if introduced and _name_allowed(introduced):
+            return introduced
+    for turn in reversed(turns):
+        if _bare_name_blocked(turn):
+            continue
+        found = guess_bare_name(turn)
+        if found:
+            return found
+    return None
 
 
 def format_phone(digits: str | None) -> str:

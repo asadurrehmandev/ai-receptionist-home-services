@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from uuid import uuid4
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
+from app.agent.hazard_semantic import semantic_ready
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
 from app.seed import seed_demo
@@ -88,8 +90,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {
-            "ok": True,
+        ready = semantic_ready()
+        body = {
+            "ok": ready,
             "business": config.name,
             "llm": settings.llm_ready,
             "stt": bool(settings.deepgram_api_key),
@@ -101,7 +104,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "model": settings.anthropic_model if settings.llm_ready else None,
             "voice_ready": _voice_block_reason() is None,
             "voice_block_reason": _voice_block_reason(),
+            "semantic_ready": ready,
         }
+        if not ready:
+            return JSONResponse(status_code=503, content=body)
+        return body
 
     @app.get("/api/config")
     def get_config():
@@ -268,16 +275,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 config.on_call_phone,
                 f"{config.name}: missed transfer from {form.get('From') or 'unknown'}. Please call them back.",
             )
+            now = datetime.now(config.zone)
+            call_sid = form.get("CallSid")
             service.store.add_event(
-                form.get("CallSid"),
+                call_sid,
                 "page",
                 {"to": config.on_call_phone, "delivery": page["status"], "detail": page.get("detail")},
                 page["status"],
-                datetime.now(config.zone),
+                now,
             )
-            spanish = _caller_language(form.get("CallSid")) == "es"
-            guidance = _missed_guidance(_caller_hazard(form.get("CallSid")), spanish)
-            callback = "Una persona le devolverá la llamada." if spanish else "Someone from the office will call you back."
+            call_id = store.get_call_by_external(call_sid) if call_sid else None
+            caller_state = None
+            if call_id:
+                try:
+                    caller_state = store.load_state(call_id)
+                except Exception:
+                    caller_state = None
+            hazard = _caller_hazard(call_sid)
+            lead = {
+                "id": "ld_" + uuid4().hex[:10],
+                "call_id": call_id,
+                "name": caller_state.name if caller_state else None,
+                "phone": form.get("From"),
+                "address": caller_state.address if caller_state else None,
+                "issue": hazard or "Missed transfer",
+                "intent": "handoff",
+                "status": "missed_transfer",
+            }
+            store.upsert_lead(lead, now)
+            hook = {
+                "event": "call.transfer_missed",
+                "business": config.name,
+                "source": "ai_receptionist",
+                "call_id": call_id,
+                "contact": {"name": lead["name"], "phone": lead["phone"], "address": lead["address"]},
+                "reason": hazard or "Missed transfer",
+            }
+            delivery = deliver_webhook(config.webhook_url, hook, settings.webhook_secret)
+            store.add_event(call_id or call_sid, "webhook", {**hook, "delivery": delivery}, delivery["status"], now)
+            spanish = _caller_language(call_sid) == "es"
+            guidance = _missed_guidance(hazard, spanish)
+            promised = page["status"] == "sent" or delivery["status"] in {"mock", "delivered"}
+            callback = (
+                ("Una persona le devolverá la llamada." if spanish else "Someone from the office will call you back.")
+                if promised
+                else ""
+            )
             if page["status"] == "sent":
                 lead = (
                     f"{config.on_call_name} no contestó. Estamos avisando al técnico de guardia."
@@ -436,6 +479,12 @@ def _missed_guidance(hazard: str | None, spanish: bool) -> str:
             "Aléjese y llame al 911 si hay humo o fuego."
             if spanish
             else "Stay away from it and call 911 if you see smoke or fire."
+        )
+    if "temperature" in label or "comfort" in label:
+        return (
+            "Mantenga a las personas vulnerables en un lugar tibio o fresco, y llame al 911 si se sienten mal."
+            if spanish
+            else "Keep anyone vulnerable warm or cool, and call 911 if they are unwell."
         )
     return (
         "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."

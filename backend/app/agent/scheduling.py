@@ -184,6 +184,17 @@ def _holiday(norm: str, now: datetime) -> datetime | None:
     return None
 
 
+def _on_month_day(now: datetime, month_name: str, day_num: int) -> datetime | None:
+    month = MONTHS[month_name]
+    try:
+        candidate = datetime(now.year, month, day_num, tzinfo=now.tzinfo)
+    except ValueError:
+        return None
+    if candidate.date() < now.date():
+        candidate = candidate.replace(year=now.year + 1)
+    return _midnight(candidate)
+
+
 def _named_holiday(norm: str, now: datetime) -> datetime | None:
     if re.search(r"\bthanksgiving\b", norm):
         found = _nth_date(now.year, 11, 3, 4, now.tzinfo)
@@ -236,10 +247,12 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
     norm = re.sub(r"\s+", " ", text.strip().lower())
     day = None
     day_until = None
+    month_name = r"january|february|march|april|may|june|july|august|september|october|november|december"
     month_match = re.search(
-        r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?\b",
+        rf"\b({month_name})\s+(\d{{1,2}})(?:st|nd|rd|th)?\b",
         norm,
     )
+    span_match = re.search(rf"\b(early|mid|middle|late)[\s-]+(?:of\s+)?({month_name})\b", norm)
     week_from = re.search(r"\ba week from (monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", norm)
     if month_match:
         month = MONTHS[month_match.group(1)]
@@ -253,6 +266,9 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
             if candidate.date() < now.date():
                 candidate = candidate.replace(year=year + 1)
             day = _midnight(candidate)
+    elif span_match:
+        day_num = {"early": 5, "mid": 15, "middle": 15, "late": 24}[span_match.group(1)]
+        day = _on_month_day(now, span_match.group(2), day_num)
     elif week_from:
         base = _upcoming(now, WEEKDAY_NAMES[week_from.group(1)])
         if base.date() == now.date():
@@ -296,6 +312,10 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
             if re.search(rf"\b{name}\b", norm):
                 day = _upcoming(now, index, force_next=bool(re.search(rf"\bnext {name}\b", norm)))
                 break
+        if day is None:
+            bare_month = re.search(rf"\b({month_name})\b", norm)
+            if bare_month and not re.search(r"\b\d{1,2}\b", norm):
+                day = _on_month_day(now, bare_month.group(1), 15)
     excluded = tuple(
         index for name, index in WEEKDAY_NAMES.items() if re.search(rf"\bexcept {name}\b", norm)
     )

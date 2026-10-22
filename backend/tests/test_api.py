@@ -170,7 +170,7 @@ def test_media_stream_without_keys_marks_configuration(client):
 
 
 def test_stream_mode_selected_when_keys_present(tmp_path):
-    settings = Settings(
+    gather_only = Settings(
         config_path=ROOT / "config" / "business.yaml",
         db_path=tmp_path / "keys.db",
         static_dir=None,
@@ -179,13 +179,36 @@ def test_stream_mode_selected_when_keys_present(tmp_path):
         elevenlabs_api_key="el_test",
         public_base_url="https://desk.example.com",
     )
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(gather_only)) as client:
         response = client.post("/api/voice/twilio/incoming", data={"CallSid": "CA55"})
         assert response.status_code == 200
-        assert "wss://desk.example.com/api/voice/stream" in response.text
+        assert "<Gather" in response.text
+        assert "<Stream" not in response.text
         health = client.get("/api/health").json()
         assert health["media_stream_ready"] is True
+        assert health["semantic_ready"] is True
         assert health["brain"] == "rules"
+    streaming = Settings(
+        config_path=ROOT / "config" / "business.yaml",
+        db_path=tmp_path / "stream.db",
+        static_dir=None,
+        seed_on_start=False,
+        deepgram_api_key="dg_test",
+        elevenlabs_api_key="el_test",
+        twilio_account_sid="AC_test",
+        twilio_auth_token="tok",
+        public_base_url="https://desk.example.com",
+    )
+    with TestClient(create_app(streaming)) as client:
+        form = {"CallSid": "CA56"}
+        signed = twilio_signature("https://desk.example.com/api/voice/twilio/incoming", form, "tok")
+        response = client.post(
+            "/api/voice/twilio/incoming",
+            data=form,
+            headers={"X-Twilio-Signature": signed},
+        )
+        assert response.status_code == 200
+        assert "wss://desk.example.com/api/voice/stream" in response.text
 
 
 def test_seed_scripts_and_reset(tmp_path):

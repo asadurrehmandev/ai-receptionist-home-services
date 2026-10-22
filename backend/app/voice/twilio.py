@@ -113,6 +113,17 @@ def gather_twiml(say: str, action: str, voice: str, language: str = "en-US") -> 
     )
 
 
+def say_and_continue(say: str, voice: str, action: str) -> str:
+    """Speak, then return to Gather. A speech failure must not hang up or go silent."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f'<Say voice="{escape(voice)}">{escape(say)}</Say>'
+        f'<Redirect method="POST">{escape(action)}</Redirect>'
+        "</Response>"
+    )
+
+
 def say_and_hangup(say: str, voice: str) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -152,5 +163,8 @@ def use_media_stream(config: BusinessConfig, settings: Settings) -> bool:
     if config.voice_mode == "gather":
         return False
     if not settings.media_stream_ready:
+        return False
+    # Without an account SID there is no REST fallback, so a speech error is dead air.
+    if not settings.twilio_account_sid or not settings.twilio_auth_token:
         return False
     return config.voice_mode in {"auto", "stream"}

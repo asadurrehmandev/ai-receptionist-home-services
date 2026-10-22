@@ -32,6 +32,7 @@ export function Board() {
   const booked = data.counts.booked || 0;
   const escalated = data.counts.escalated || 0;
   const missed = data.counts.missed || 0;
+  const missedTransfers = (data.leads || []).filter((lead) => lead.status === "missed_transfer");
   const metrics = [
     { label: "Calls handled", value: String(data.total_calls), note: "Simulator and phone" },
     { label: "Jobs booked", value: String(booked), note: "On the mock calendar" },
@@ -57,6 +58,23 @@ export function Board() {
           <div>{missed === 0 ? "No abandoned calls in this sample." : `${missed} caller${missed === 1 ? "" : "s"} hung up early.`}</div>
         </div>
       </header>
+
+      {missedTransfers.length > 0 && (
+        <section className="rounded-lg border border-[#e7c7c2] bg-[#f8e4e1] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-2xl text-[#9d2c2c]">Missed transfer</h2>
+            <Badge tone="missed_transfer">Call them back</Badge>
+          </div>
+          <ul className="mt-2 space-y-1 text-sm text-[#9d2c2c]">
+            {missedTransfers.map((lead) => (
+              <li key={lead.id}>
+                {lead.name || "Unknown caller"}
+                {lead.phone ? ` · ${formatPhone(lead.phone)}` : ""} — the office still owes a callback.
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {metrics.map((item) => (

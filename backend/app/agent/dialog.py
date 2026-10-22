@@ -24,8 +24,8 @@ from app.agent.nlu import (
     extract_street,
     extract_unit,
     extract_zip,
+    extract_caller_name,
     format_phone,
-    guess_bare_name,
     is_clean_yes,
     wants_human,
 )
@@ -304,6 +304,8 @@ class Dialog:
         spoken = render(intent, field if isinstance(field, str) else None, empathy_id, facts)
         if spoken is None:
             return {"ok": False, "speak_rejected": True, "error": "That line cannot be spoken."}, "", None
+        if intent == "ask_field" and isinstance(field, str):
+            state.asked_field = field
         return {"ok": True, "rendered": spoken, "say": spoken}, spoken, None
 
     def _facts(self, state: SessionState, utterance: str) -> dict:
@@ -328,7 +330,7 @@ class Dialog:
     def _record(self, state: SessionState, utterance: str, payload: dict) -> tuple[dict, str, None]:
         del payload
         turns = _caller_turns(state, utterance)
-        name = _first(turns, guess_bare_name)
+        name = extract_caller_name(turns, state.asked_field, utterance)
         phone = _first(turns, lambda text: extract_phone(text)[0])
         street = _first(turns, lambda text: extract_street(text, self.engine.config.cities))
         unit = _first(turns, extract_unit)

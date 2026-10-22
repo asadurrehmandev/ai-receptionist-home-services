@@ -28,12 +28,20 @@ class MediaBridge:
         transcribe: Callable[[bytes], str] | None = None,
         updater: Callable[[str, str], None] | None = None,
         dial_twiml: Callable[[str], str] | None = None,
+        gather_url: str | None = None,
+        on_call_phone: str | None = None,
+        caller_id: str | None = None,
+        dial_action: str | None = None,
     ) -> None:
         self.service = service
         self.synthesize = synthesize
         self.transcribe = transcribe
         self.updater = updater
         self.dial_twiml = dial_twiml
+        self.gather_url = gather_url or "/api/voice/twilio/gather"
+        self.on_call_phone = on_call_phone
+        self.caller_id = caller_id
+        self.dial_action = dial_action
         self.stream_sid: str | None = None
         self.call_sid: str | None = None
         self.call_id: str | None = None
@@ -51,7 +59,7 @@ class MediaBridge:
             self.call_sid = start.get("callSid")
             started = self.service.start("twilio-stream", external_id=self.call_sid)
             self.call_id = started["id"]
-            return self._speak(started["say"])
+            return self._speak(started["say"], outcome=None)
         if event == "media":
             payload = (message.get("media") or {}).get("payload") or ""
             if not payload:
@@ -79,7 +87,7 @@ class MediaBridge:
             started = self.service.start("twilio-stream", external_id=self.call_sid)
             self.call_id = started["id"]
         result = self.service.turn(self.call_id, text)
-        frames = self._speak(result["say"])
+        frames = self._speak(result["say"], outcome=result.get("outcome"))
         if result.get("outcome") == "escalated":
             frames.append(self._mark("transfer"))
             twiml = self.dial_twiml(result["say"]) if self.dial_twiml else None
@@ -97,7 +105,10 @@ class MediaBridge:
         try:
             transcript = self.transcribe(audio)
         except Exception:
-            return [self._mark("stt-failed")]
+            frames = [self._mark("stt-failed")]
+            if not self._rest_fallback("I didn't catch that. Please tell me again what's going on.", outcome=None):
+                frames.append(self._mark("say-fallback"))
+            return frames
         if not transcript:
             return [self._mark("empty-transcript")]
         return self.apply_transcript(transcript)
@@ -110,7 +121,24 @@ class MediaBridge:
             count += 1
         return count
 
-    def _speak(self, text: str) -> list[dict]:
+    def _fallback_twiml(self, text: str, outcome: str | None) -> str:
+        from app.voice.twilio import dial_twiml, say_and_continue
+
+        voice = "Polly.Joanna"
+        if outcome == "escalated" and self.on_call_phone and self.dial_action and self.caller_id:
+            return dial_twiml(text, self.on_call_phone, voice, self.dial_action, self.caller_id)
+        return say_and_continue(text, voice, self.gather_url)
+
+    def _rest_fallback(self, text: str, outcome: str | None) -> bool:
+        if not (self.updater and self.call_sid):
+            return False
+        try:
+            self.updater(self.call_sid, self._fallback_twiml(text, outcome))
+        except Exception:
+            return False
+        return True
+
+    def _speak(self, text: str, outcome: str | None = None) -> list[dict]:
         frames: list[dict] = []
         if self.synthesize is None:
             frames.append(self._mark("tts-unconfigured"))
@@ -120,14 +148,7 @@ class MediaBridge:
             audio = self.synthesize(text)
         except Exception:
             frames.append(self._mark("tts-failed"))
-            if self.updater and self.call_sid:
-                from app.voice.twilio import say_and_hangup
-
-                try:
-                    self.updater(self.call_sid, say_and_hangup(text, "Polly.Joanna"))
-                except Exception:
-                    frames.append(self._mark("say-fallback"))
-            else:
+            if not self._rest_fallback(text, outcome):
                 frames.append(self._mark("say-fallback"))
             return frames
         frames.append({"event": "clear", "streamSid": self.stream_sid})
@@ -174,7 +195,19 @@ def bridge_from_settings(service, settings) -> MediaBridge:
                 timeout=5,
             )
 
-    return MediaBridge(service, synthesize=synthesize, transcribe=transcribe, updater=updater)
+    base = (settings.public_base_url or "").rstrip("/")
+    gather_url = f"{base}/api/voice/twilio/gather" if base else "/api/voice/twilio/gather"
+    dial_action = f"{base}/api/voice/twilio/dial-status" if base else "/api/voice/twilio/dial-status"
+    return MediaBridge(
+        service,
+        synthesize=synthesize,
+        transcribe=transcribe,
+        updater=updater,
+        gather_url=gather_url,
+        on_call_phone=service.config.on_call_phone,
+        caller_id=service.config.phone_e164,
+        dial_action=dial_action,
+    )
 
 
 def loads_message(raw: str) -> dict:

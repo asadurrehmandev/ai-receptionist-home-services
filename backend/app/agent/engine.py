@@ -68,6 +68,8 @@ class SessionState:
     verify_last4: str | None = None
     verify_day: str | None = None
     verify_fails: int = 0
+    unclear_count: int = 0
+    asked_field: str | None = None
     messages: list = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
 
@@ -205,6 +207,9 @@ class Engine:
             self._fill(state, raw)
             return self._language_handoff(state, started)
 
+        if state.phase == "unclear_handoff":
+            return self._unclear_handoff(state, raw, started)
+
         if wants_human(raw):
             self._fill(state, raw)
             state.intent = state.intent or "handoff"
@@ -240,6 +245,14 @@ class Engine:
                     started,
                 )
             if state.intent == "unclear":
+                state.unclear_count += 1
+                if state.unclear_count > 2:
+                    state.phase = "unclear_handoff"
+                    return self._finish(
+                        state,
+                        "Is anyone in danger, or would you like a person to call you back?",
+                        started,
+                    )
                 return self._finish(
                     state,
                     "I can help with a new repair, an estimate, an existing appointment, or an emergency. What's going on?",
@@ -394,6 +407,7 @@ class Engine:
             )
         if not state.name:
             state.phase = "collect_name"
+            state.asked_field = "name"
             return self._finish(
                 state,
                 self._line(
@@ -791,11 +805,52 @@ class Engine:
             say = f"{prefix} {say}"
         return self._finish(state, say, started, self._capture_events(state, "lead.callback"))
 
+    def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
+        """After two unclear tries, route the safety question. Do not show the menu again."""
+        self._fill(state, raw)
+        danger = bool(
+            re.search(r"\b(danger|hurt|injured|emergency|bleeding|unconscious|can't breathe|cant breathe)\b", raw, re.I)
+        )
+        wants_callback = bool(
+            re.search(r"\b(person|callback|call me|call back|human|someone call|ring me)\b", raw, re.I)
+        )
+        if danger or (is_yes(raw) and not wants_callback):
+            state.hazard = state.hazard or "Caller confirmed danger"
+            return self._escalate(state, started, state.hazard)
+        if wants_callback or is_no(raw):
+            return self._office_callback(state, started)
+        intent = detect_intent(raw)
+        if intent not in {None, "unclear", "spam"}:
+            state.intent = intent
+            state.unclear_count = 0
+            state.phase = "discover"
+            return self._continue_intake(state, raw, started)
+        return self._office_callback(state, started)
+
+    def _office_callback(self, state: SessionState, started: float) -> TurnResult:
+        state.outcome = "callback"
+        state.phase = "closed"
+        state.intent = state.intent or "handoff"
+        say = "A person from the office will call you back. If anyone is in danger, call 911."
+        if state.language == "es":
+            say = "Una persona de la oficina le devolverá la llamada. Si hay alguien en peligro, llame al 911."
+        events = [
+            {"type": "lead", "payload": _lead_payload(state, "callback")},
+            {"type": "webhook", "payload": self._webhook(state, "lead.callback", None)},
+        ]
+        return self._finish(state, say, started, events)
+
     def _escalate(self, state: SessionState, started: float, reason: str) -> TurnResult:
         state.outcome = "escalated"
         state.phase = "closed"
         who = self.config.on_call_name
-        if state.language == "es":
+        if state.language == "es" and _comfort_hazard(reason):
+            say = (
+                f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
+                "Mantenga a las personas vulnerables en un lugar tibio o fresco, y llame al 911 si se sienten mal. "
+                f"La tarifa de emergencia es ${self.config.emergency_dispatch_usd}."
+            )
+        elif state.language == "es":
             say = (
                 f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
                 "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas. "
@@ -805,6 +860,12 @@ class Engine:
             say = (
                 f"You asked for a person, so I'm connecting you to {who}, our on-call technician. "
                 "Please stay on the line."
+            )
+        elif _comfort_hazard(reason):
+            say = (
+                f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
+                "Please stay on the line. Keep anyone vulnerable warm or cool, and call 911 if they are unwell. "
+                f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
             )
         else:
             say = (
@@ -1033,6 +1094,11 @@ def _choice_fits(choice: datetime | None, preference) -> bool:
     if preference.part == "evening" and choice.hour < 16:
         return False
     return True
+
+
+def _comfort_hazard(reason: str | None) -> bool:
+    label = (reason or "").lower()
+    return "temperature" in label or "comfort" in label
 
 
 def _lead_payload(state: SessionState, status: str) -> dict:

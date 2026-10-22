@@ -83,13 +83,17 @@ _WATER_PATH = re.compile(
     r"\b(wall|ceiling|floor|techo)\b.{0,24}\b(coming|pouring|gushing|through|water|agua|saliendo)\b",
     re.I,
 )
-_SEWAGE = re.compile(r"\b(sewage|sewer|raw sewage|alcantarill\w*|poop water|agua negra)\b", re.I)
+_SEWAGE = re.compile(
+    r"\b(sewage|sewer|raw sewage|sewer water|wastewater|brown water|black water|"
+    r"alcantarill\w*|poop water|aguas? negras)\b",
+    re.I,
+)
 _SEWAGE_MOTION = re.compile(r"\b(backup|backing|backed|coming|overflow|subiendo|regres)\w*\b", re.I)
 _ELECTRICAL = re.compile(
     r"\b(sparks?|sparking|chispas?|arcing|electrical fire)\b|"
     r"\b(outlet|socket|breaker|wire|wiring|panel|switch|fixture|plug|cord|light)\b.{0,40}"
-    r"\b(smoke|smoking|popping|burning|melting|hot|warm|humo|sparks?)\b|"
-    r"\b(smoke|smoking|popping|burning smell|burning plastic|humo|sparks?|melting)\b.{0,40}"
+    r"\b(smoke|smoking|popping|burning|melting|melted|hot|scorch\w*|charred|humo|sparks?)\b|"
+    r"\b(smoke|smoking|popping|burning smell|burning plastic|humo|sparks?|melting|melted|scorch\w*|charred)\b.{0,40}"
     r"\b(outlet|socket|breaker|wire|wiring|panel|switch|fixture|plug|cord|light)\b",
     re.I,
 )
@@ -111,8 +115,8 @@ _COMFORT = re.compile(
 )
 _AGE = re.compile(
     r"\b(\d{2,3})\s*(?:years?\s*old|year-old|yo)\b|"
-    r"\bi(?:'m| am)\s+(\d{2,3})\b|"
-    r"\bis\s+(\d{2,3})\b(?!\s*(?:degrees|degree|grados|°))",
+    r"\bi(?:'m| am)\s+(\d{2,3})\b(?!\s*(?:degrees|degree|grados|°|inside|indoors))|"
+    r"\b(?:who|she|he|mom|dad|mother|father|grandma|grandpa|grandmother|grandfather) is\s+(\d{2,3})\b",
     re.I,
 )
 _OVER_UNDER = re.compile(r"\b(?:over|above|under|below)\s+(\d{2,3})\b", re.I)
@@ -168,6 +172,18 @@ def _clauses(text: str) -> list[str]:
 _STRONG_NOW = re.compile(
     r"\b(won't stop|wont stop|will not stop|pouring|gushing|spraying|spewing|hissing|"
     r"smell|smelling|odor|odour|beeping|sparking|right now|ahora|sin parar)\b",
+    re.I,
+)
+_FINISHED = re.compile(
+    r"\b(was repaired|were repaired|got repaired|been repaired|they repaired|"
+    r"was resolved|were resolved|been resolved|got resolved|"
+    r"was fixed|were fixed|got fixed|been fixed|they fixed|"
+    r"has been quiet|been quiet|have not smelled|haven't smelled|not smelled anything|"
+    r"nothing is happening)\b",
+    re.I,
+)
+_STILL_GOING = re.compile(
+    r"\b(again|still|is leaking|it's leaking|it is leaking|came back|coming back)\b",
     re.I,
 )
 _GAS_I18N = re.compile(
@@ -258,7 +274,7 @@ def _carbon(clause: str) -> str | None:
         return "definite"
     hard = _unnegated(clause, _CO_HARD)
     chirp = _unnegated(clause, re.compile(r"\b(chirp\w*|pitando|pita|pito)\b", re.I))
-    if _CO_BATTERY.search(clause) and (named or chirp or _CO_BATTERY_ISSUE.search(clause)):
+    if _CO_BATTERY.search(clause) and (named or chirp):
         if hard:
             return "definite"
         if _CO_PARTS_ERRAND.search(clause) and not _CO_BATTERY_ISSUE.search(clause) and not chirp:
@@ -272,12 +288,15 @@ def _carbon(clause: str) -> str | None:
 
 
 def _sewage_active(clause: str) -> bool:
-    if not _SEWAGE.search(clause):
+    found = _SEWAGE.search(clause)
+    if not found or _negated_at(clause, found.start()):
         return False
     motions = list(_SEWAGE_MOTION.finditer(clause))
     if motions:
         return any(not _negated_at(clause, match.start()) for match in motions)
-    return bool(re.search(r"\b(raw sewage|agua negra)\b", clause))
+    if re.search(r"\b(raw sewage|aguas? negras)\b", clause):
+        return True
+    return bool(re.search(r"\b(drain|toilet|shower|tub|regadera|floor|basement|laundry)\b", clause))
 
 
 def _water(clause: str) -> bool:
@@ -301,10 +320,32 @@ def _water(clause: str) -> bool:
     return False
 
 
+_DEVICE = re.compile(
+    r"\b(outlet|socket|breaker|wire|wiring|panel|switch|fixture|plug|cord|light)\b",
+    re.I,
+)
+_ELEC_WORD = re.compile(
+    r"\b(smoke|smoking|popping|burning|melting|melted|hot|scorch\w*|charred|humo|"
+    r"sparks?|sparking|chispas?|arcing)\b",
+    re.I,
+)
+_BARE_SPARK = re.compile(r"\b(sparks?|sparking|chispas?|arcing|electrical fire)\b", re.I)
+
+
 def _electrical(clause: str) -> bool:
     if _COOKING.search(clause) and not re.search(r"\b(outlet|panel|breaker|wire)\b", clause):
         return False
-    return _unnegated(clause, _ELECTRICAL)
+    if any(not _negated_at(clause, match.start()) for match in _BARE_SPARK.finditer(clause)):
+        return True
+    for hazard in _ELEC_WORD.finditer(clause):
+        if _negated_at(clause, hazard.start()):
+            continue
+        for device in _DEVICE.finditer(clause):
+            if _negated_at(clause, device.start()):
+                continue
+            if abs(device.start() - hazard.start()) <= 60:
+                return True
+    return False
 
 
 def _older_adult(clause: str) -> bool:
@@ -359,14 +400,185 @@ def _emergency_word(clause: str) -> bool:
     return found
 
 
-def classify_emergency(text: str) -> tuple[str, str | None]:
-    """Return ('definite'|'advice'|'none', label).
+def _happening_now(text: str) -> bool:
+    if _STILL_GOING.search(text):
+        return True
+    return any(not _negated_at(text, match.start()) for match in _STRONG_NOW.finditer(text))
 
-    'definite' transfers. 'advice' is the carbon-monoxide battery case.
-    Historical clauses are ignored. A negation has to sit on the hazard.
+
+def _past_and_quiet(text: str) -> bool:
+    """A finished repair stays routine unless a hazard is happening in this call."""
+    if not (_HISTORICAL.search(text) or _FINISHED.search(text)):
+        return False
+    if _happening_now(text):
+        return False
+    return True
+
+
+def _other_hazard(text: str) -> bool:
+    for clause in _clauses(text):
+        if _skip_clause(clause):
+            continue
+        if _gas(clause) or _electrical(clause) or _water(clause) or _comfort(clause, text):
+            return True
+    return False
+
+
+_WET = re.compile(
+    r"\b(water|agua|rain|raining|rainstorm|sprinkler|swimming|soaked|soaking|stream)\b",
+    re.I,
+)
+_PLACE = re.compile(
+    r"\b(ceiling|light|hallway|hall|laundry|cabinet|floor|closet|bathroom|kitchen|"
+    r"upstairs|bedroom|room|drywall|wall)\b",
+    re.I,
+)
+_FLOW = re.compile(
+    r"\b(streaming|stream|spraying|spray|pouring|gushing|soaked|standing water|"
+    r"coming down|coming through|running across|running out|shooting|burst|popped|"
+    r"let go|water everywhere|will not stop|won't stop|wont stop)\b",
+    re.I,
+)
+_APPLIANCE_LINE = re.compile(
+    r"\b(dishwasher|washing machine|washer|ice maker|refrigerator|fridge|supply line|"
+    r"hose|water heater|vanity)\b",
+    re.I,
+)
+_SCORCH = re.compile(
+    r"\b(scorch\w*|charred|discolored|too hot to touch|burning smell|"
+    r"smells like something burning|smell something burning|something burning)\b",
+    re.I,
+)
+_ALARM_UNIT = re.compile(r"\b(alarm|detector|monitor|wall unit)\b", re.I)
+_SHRIEK = re.compile(
+    r"\b(shrieking|shrieks|screaming|screams|will not stop|won't stop|wont stop|"
+    r"will not quit|won't quit|wont quit|keeps sounding|nonstop)\b",
+    re.I,
+)
+_STATUS_OK = re.compile(
+    r"\b(no sparks?|nothing is hot|no smoke|green light|light is green|shows green|"
+    r"showing green|just want it tested|only want it tested|want it tested|"
+    r"only want the annual test|just want a test)\b",
+    re.I,
+)
+_HEDGE = re.compile(
+    r"\b(might|maybe|possibly|not sure|cannot tell|can't tell|do not know|don't know|"
+    r"a little|slightly|faint|damp spot|wet mark|beeped once)\b",
+    re.I,
+)
+
+
+def _building_water(text: str) -> tuple[str, str] | None:
+    """Water leaving a ceiling, a wall, or an appliance. A drip into a freezer is not this."""
+    if re.search(r"\b(into the freezer|ice bin|ice tray)\b", text):
+        return None
+    indoor = bool(_PLACE.search(text))
+    if re.search(r"\b(raining|rainstorm|sprinkler)\b", text) and indoor:
+        return "definite", "Active water"
+    if re.search(r"\brain\b", text) and re.search(r"\b(indoors|inside|ceiling)\b", text):
+        return "definite", "Active water"
+    if re.search(r"\bswimming in the\b", text) and indoor:
+        return "definite", "Active water"
+    if re.search(r"\bwater everywhere\b", text):
+        return "definite", "Active water"
+    flowing = _FLOW.search(text)
+    if flowing and _WET.search(text) and (indoor or _APPLIANCE_LINE.search(text)):
+        if _mild_water(text) and not re.search(
+            r"\b(streaming|spraying|pouring|gushing|burst|popped|everywhere|standing water|"
+            r"won't stop|wont stop|will not stop)\b",
+            text,
+        ):
+            return None
+        return "definite", "Active water"
+    return None
+
+
+def _unnamed_alarm(text: str) -> tuple[str, str] | None:
+    """A sounding detector or a high reading, even when the caller never says CO."""
+    if not _ALARM_UNIT.search(text):
+        return None
+    if re.search(r"\b(green light|light is green|shows green|showing green)\b", text):
+        return None
+    if _CO_BATTERY.search(text) and re.search(r"\bchirp", text) and not _SHRIEK.search(text):
+        return None
+    reading = re.search(r"\b(?:reads?|reading|shows|showing|display(?:ing)?)\s+(\d{2,4})\b", text)
+    high = bool(reading and int(reading.group(1)) >= 35)
+    sick = bool(_SYMPTOM.search(text))
+    if _SHRIEK.search(text) or high or (sick and (_SHRIEK.search(text) or re.search(r"\b(will not|won't|wont)\b", text))):
+        return "definite", "Carbon monoxide"
+    return None
+
+
+def _scorch(text: str) -> tuple[str, str] | None:
+    if not _SCORCH.search(text):
+        return None
+    if _COOKING.search(text) and not re.search(r"\b(outlet|panel|breaker|wire|furnace)\b", text):
+        return None
+    if re.search(r"\b(wall|closet|panel|furnace|heater|dryer|outlet|breaker|drywall)\b", text):
+        return "definite", "Electrical hazard"
+    return None
+
+
+def _vulnerable_cold(text: str) -> tuple[str, str] | None:
+    person = bool(_VULNERABLE.search(text) or _older_adult(text))
+    if not person and not _FREEZING.search(text):
+        return None
+    if _COMFORT.search(text) or _COMFORT_ALT.search(text) or _extreme_temperature(text) or _FREEZING.search(text):
+        if person or _extreme_temperature(text):
+            return "definite", "Unsafe indoor temperature"
+    return None
+
+
+def _explicit_clear(text: str) -> bool:
+    """A caller who rules the hazard out is not paged for the word they negated."""
+    if not _STATUS_OK.search(text):
+        return False
+    if _other_hazard(text) or _unnamed_alarm(text) or _building_water(text) or _scorch(text):
+        return False
+    return True
+
+
+def _soft_electrical(text: str) -> bool:
+    if re.search(r"\b(sparks?|smoke|smoking|melting|melted|scorch\w*|charred|burning|too hot|\bhot\b)\b", text):
+        return False
+    return bool(re.search(r"\b(warm|slightly warm|a little warm)\b", text))
+
+
+def _borderline(text: str) -> bool:
+    """Uncertain wording asks a safety question instead of booking or paging."""
+    if not _HEDGE.search(text):
+        return False
+    if not re.search(r"\b(smell|odor|odour|damp|wet|warm|alarm|detector|outlet|panel|ceiling|furnace)\b", text):
+        return False
+    if _WATER_FORCE.search(text) or _GAS_WORD.search(text):
+        return False
+    if re.search(r"\b(sparks?|smoke|screaming|shrieking|hissing|pouring)\b", text):
+        return False
+    return True
+
+
+def _class_hazard(text: str) -> tuple[str, str] | None:
+    for reader in (_building_water, _unnamed_alarm, _scorch):
+        found = reader(text)
+        if found is not None:
+            return found
+    return None
+
+
+def classify_emergency(text: str) -> tuple[str, str | None]:
+    """Return ('definite'|'ask'|'advice'|'none', label).
+
+    'definite' transfers. 'ask' is the safety question. 'advice' is a chirping
+    detector battery. A finished repair stays routine. A negation has to sit
+    on the hazard. If the embedder cannot load, an uncertain turn asks rather
+    than pretending there is no hazard.
     """
     folded = fold(text)
-    advice = _battery_advice(folded)
+    if _past_and_quiet(folded):
+        return "none", None
+    if _battery_advice(folded) and not _other_hazard(folded):
+        return "advice", "CO detector battery"
+    advice = False
     for clause in _clauses(folded):
         if _skip_clause(clause):
             continue
@@ -385,25 +597,35 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
             return "definite", "Unsafe indoor temperature"
         if _emergency_word(clause):
             return "definite", "Caller said emergency"
-    ruled: tuple[str, str | None]
     if advice:
-        ruled = ("advice", "CO detector battery")
-    elif _backup(folded) >= 3:
-        ruled = ("definite", "Hazard signals")
-    else:
-        ruled = ("none", None)
-    if ruled[0] == "advice":
-        return ruled
-    if ruled[0] != "definite" and _routine_context(folded):
+        return "advice", "CO detector battery"
+    extra = _class_hazard(folded)
+    if extra is not None:
+        return extra
+    cold = _vulnerable_cold(folded)
+    if cold is not None:
+        return cold
+    if _backup(folded) >= 3:
+        return "definite", "Hazard signals"
+    if _explicit_clear(folded) or _routine_context(folded):
         return "none", None
+    if _borderline(folded):
+        return "ask", "Uncertain hazard"
+    if _mild_water(folded) and not _GAS_SIGNAL.search(folded) and not _CO_HARD.search(folded):
+        if not _unnegated(folded, _ELECTRICAL):
+            return "none", None
     from app.agent.hazard_semantic import semantic_hazard
 
     guessed = semantic_hazard(text)
+    if guessed[1] == "Hazard model unavailable":
+        return "ask", "Hazard model unavailable"
     if guessed[1] == "Unsafe indoor temperature" and not _comfort_context(folded):
         guessed = ("none", None)
     if guessed[1] == "Active water" and _mild_water(folded):
         guessed = ("none", None)
-    return _stricter(ruled, guessed)
+    if guessed[1] == "Electrical hazard" and _soft_electrical(folded):
+        guessed = ("ask", "Electrical hazard")
+    return _stricter(("none", None), guessed)
 
 
 def _extreme_temperature(text: str) -> bool:

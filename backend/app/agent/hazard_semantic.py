@@ -9,6 +9,7 @@ urgency. Thresholds are calibrated after the frozen set is written.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import numpy as np
 
@@ -462,18 +463,43 @@ _ROUTINE = {
 
 _model = None
 _bank: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
+_load_failed = False
+
+
+class EmbedderUnavailable(RuntimeError):
+    """The hazard weights could not be loaded. Callers must fail closed."""
+
+
+def semantic_ready() -> bool:
+    """True only after the local weights have loaded. A failed load is not retried."""
+    if _load_failed:
+        return False
+    if _model is not None:
+        return True
+    try:
+        _embedder()
+    except EmbedderUnavailable:
+        return False
+    return _model is not None
 
 
 def semantic_hazard(text: str) -> tuple[str, str | None]:
-    """Return ('definite'|'ask'|'none', label). Empty and tiny strings are none."""
+    """Return ('definite'|'ask'|'none', label). Empty and tiny strings are none.
+
+    A missing model asks a person to judge the call. It does not report 'no hazard'.
+    """
     cleaned = " ".join((text or "").split())
     if len(cleaned) < 8:
         return "none", None
+    if _load_failed:
+        return "ask", "Hazard model unavailable"
     try:
         vector = _embed([cleaned])[0]
         bank = _prototypes()
+    except EmbedderUnavailable:
+        return "ask", "Hazard model unavailable"
     except Exception:
-        return "none", None
+        return "ask", "Hazard model unavailable"
     ranked: list[tuple[float, float, str]] = []
     for concept, (hazard, routine) in bank.items():
         hazard_score = _max_cosine(vector, hazard)
@@ -492,14 +518,35 @@ def _embed(lines: list[str]) -> np.ndarray:
     return np.vstack([np.asarray(item, dtype=np.float32) for item in vectors])
 
 
+def _weights_present(cache: str | None) -> bool:
+    from fastembed.common.utils import define_cache_dir
+
+    root = Path(define_cache_dir(cache))
+    folder = root / "models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+    if not folder.exists():
+        return False
+    return any(folder.rglob("model.onnx")) or any(folder.rglob("model_optimized.onnx"))
+
+
 def _embedder():
-    global _model
-    if _model is None:
-        cache = os.environ.get("FASTEMBED_CACHE_PATH")
+    global _model, _load_failed
+    if _model is not None:
+        return _model
+    if _load_failed:
+        raise EmbedderUnavailable("hazard embedder failed to load")
+    cache = os.environ.get("FASTEMBED_CACHE_PATH")
+    offline = os.environ.get("HF_HUB_OFFLINE") == "1" or _weights_present(cache)
+    try:
         from fastembed import TextEmbedding
 
-        kwargs = {"cache_dir": cache} if cache else {}
+        kwargs: dict = {"local_files_only": True} if offline else {}
+        if cache:
+            kwargs["cache_dir"] = cache
         _model = TextEmbedding(MODEL_NAME, **kwargs)
+    except Exception as exc:
+        _load_failed = True
+        _model = None
+        raise EmbedderUnavailable("hazard embedder failed to load") from exc
     return _model
 
 

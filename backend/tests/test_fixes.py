@@ -72,7 +72,7 @@ def test_two_confirmations_cannot_share_a_slot(tmp_path):
 def test_eight_concurrent_confirms_book_one_slot(tmp_path):
     service, store = _service(tmp_path)
     ids = [
-        _to_confirm(service, f"Caller {n}", f"512-555-02{n:02d}", f"{n + 1} Lamar Street, Austin 78701")
+        _to_confirm(service, f"Casey {('Nguyen','Patel','Brooks','Diaz','Shah','Ortiz','Keller','Walsh')[n]}", f"512-555-02{n:02d}", f"{n + 1} Lamar Street, Austin 78701")
         for n in range(8)
     ]
     with ThreadPoolExecutor(8) as pool:
@@ -303,6 +303,8 @@ def test_tts_error_falls_back_to_say(tmp_path):
     frames = bridge.handle({"event": "start", "start": {"streamSid": "MZ", "callSid": "CA-tts"}})
     assert any(frame.get("mark", {}).get("name") == "tts-failed" for frame in frames)
     assert updates and "<Say" in updates[0][1]
+    assert "<Redirect" in updates[0][1]
+    assert "<Hangup" not in updates[0][1]
     again = bridge.apply_transcript("the kitchen drain is clogged")
     assert any(frame.get("mark", {}).get("name") == "tts-failed" for frame in again)
     store.close()

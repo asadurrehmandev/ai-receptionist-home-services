@@ -53,6 +53,8 @@ export const OUTCOME_TONE: Record<string, string> = {
   booked: "bg-[#e5f2ea] text-[#1f6a45]",
   rescheduled: "bg-[#e5f2ea] text-[#1f6a45]",
   escalated: "bg-[#f8e4e1] text-[#9d2c2c]",
+  missed_transfer: "bg-[#9d2c2c] text-white",
+  callback: "bg-[#f8ecd9] text-[#8a5a12]",
   missed: "bg-[#ece7df] text-[#5c564e]",
   spam: "bg-[#f8ecd9] text-[#8a5a12]",
   qualified: "bg-[#f3e6da] text-[#8a4b22]",
