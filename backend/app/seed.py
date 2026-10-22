@@ -87,9 +87,19 @@ def seed_demo(service) -> list[dict]:
     from app.agent.hazard_nli import nli_ready
     from app.agent.hazard_semantic import semantic_ready
 
+    from app.agent.understand import pause_understand, understand_enabled, understand_ready
+
     if not semantic_ready() or not nli_ready():
         logger.warning("A safety model is not loaded. Skipping demo seed.")
         return []
+    if understand_enabled() and not understand_ready():
+        logger.warning("The understander is not available. Skipping demo seed.")
+        return []
+    with pause_understand():
+        return _seed_scripts(service)
+
+
+def _seed_scripts(service) -> list[dict]:
     results = []
     for script in SEED_SCRIPTS:
         try:

@@ -173,6 +173,292 @@ def _clauses(text: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
+def _split_turn(text: str) -> list[str]:
+    """Clause split, plus a fresh clause at 'and now' so a past visit cannot hide it."""
+    marked = re.sub(
+        r"\b(and now|but now|and today|and tonight|and this morning|and right now)\b",
+        r". \1",
+        text,
+        flags=re.I,
+    )
+    return _clauses(marked)
+
+
+_PRESENT_CUE_WORD = re.compile(
+    r"\b(?:right now|just started|this morning|this evening|this afternoon|today|tonight|now|still)\b|"
+    r"\b(?:is|are)\s+(?:\w+\s+){0,2}\w+ing\b|"
+    r"\b(?:keeps|keep)\s+\w+ing\b|"
+        r"\b(?:i|we|it)\s+smells?\b|\bsmells\b|\bsmelling\b|"
+        r"\b(?:hissing|sparking|sizzling|crackling|dripping|spraying|pouring|gushing|"
+        r"overflowing|charring|slurring)\b|"
+        r"\b(?:will not|won't|wont)\b|"
+        r"\b(?:is|are)\s+(?:blocked|sounding|going|coming)\b|"
+        r"\bthere(?:'s| is| are)\b",
+    re.I,
+)
+_HAZARD_STEM = re.compile(
+    r"\b(smoke|smoking|spark\w*|crackle\w*|sizzl\w*|arcing|shock\w*|charr\w*|"
+    r"smell\w*|odor\w*|odour\w*|rotten eggs?|sulfur|sulphur|"
+    r"dizzy|faint\w*|drows\w*|slurr\w*|confused|collapsed?|vomit\w*|"
+    r"burst\w*|sag\w*|flood\w*|overflow\w*|spraying|gushing|pouring|"
+    r"alarm|flue|hose|cold to the touch|no heat|eggs?)\b",
+    re.I,
+)
+_PAST_MARK = re.compile(
+    r"\b(last year|last winter|last month|last week|last summer|last fall|last autumn|last spring|"
+    r"years ago|months ago|a couple of years back|years back|yesterday|"
+        r"was serviced|were serviced|had it serviced|was repaired|was fixed|was installed|was hooked up|"
+        r"had a leak|had a gas|they repaired|"
+    r"you came out|you were here|after the visit|earlier|already gone|gone quiet|has stopped|has reset)\b",
+    re.I,
+)
+_IF_EVER = re.compile(
+    r"\b(if i ever|if we ever|if it ever|if you ever|what should i do if|what do i do if|"
+    r"if \w+(?:\s+\w+){0,6}\s+ever|hypothetically|what if|household plan|writing a plan)\b",
+    re.I,
+)
+_SOMEONE_ELSE = re.compile(
+    r"\b(neighbou?r(?:'s)?|next door|their house|someone else(?:'s)?(?: house)?)\b",
+    re.I,
+)
+_OUR_TOO = re.compile(r"\b(ours|our (?:house|basement|place|side|unit)|we also|us too)\b", re.I)
+_CONTEXT_NOUN = re.compile(
+    r"\b(furnace|heater|boiler|flue|panel|meter|range|oven|dryer|stove|pipe|ceiling|"
+    r"alarm|detector|repair\w*|fixed|leak\w*|gas|line|closet|hose)\b",
+    re.I,
+)
+_HAZARD_NOUN = re.compile(
+    r"\b(smell\w*|odor\w*|odour\w*|smoke|spark\w*|crackle\w*|sizzl\w*|shock\w*|"
+    r"alarm|dizzy|faint\w*|drows\w*|slurr\w*|vomit\w*|collapsed?|burst\w*|flood\w*|"
+    r"flames?|hiss\w*|charr\w*|overflow\w*)\b|"
+    r"\bwater\s+(?:is\s+)?(?:moving|running|pouring|coming|spraying)\b",
+    re.I,
+)
+_PLAIN_JOB = re.compile(
+    r"\b(sump(?:\s+pump)?|exhaust fan|bath fan|bathroom fan|gfci|gfi|"
+    r"flood sensors?|water softener|softener|check-?up|checkup|inspection|"
+    r"tune-?up|spigots?|hose bibs?|sillcocks?)\b",
+    re.I,
+)
+_ORDINARY_JOB = re.compile(
+    r"\b(drain|clog\w*|spigot|faucet|filter|softener|sump|disposal|sensor)\b",
+    re.I,
+)
+_INSTRUCTION = re.compile(
+    r"\b(treat this|treat it as|classify this|classify it as|mark this|mark it as|"
+    r"page the on-call|send the on-call)\b",
+    re.I,
+)
+
+
+def _present_cue(clause: str) -> bool:
+    return bool(_PRESENT_CUE_WORD.search(clause))
+
+
+_RESOLVED = re.compile(
+    r"\b(was repaired|were repaired|they repaired|been quiet|has been quiet|no odor|no smell|not smelling)\b",
+    re.I,
+)
+_STILL_DANGER = re.compile(
+    r"\b(i smell|we smell|it smells|smells like|smoke|spark\w*|flames?|spraying|gushing|burst\w*|"
+    r"collapsed?|dizzy|vomiting)\b",
+    re.I,
+)
+
+
+def _current_danger(clause: str) -> bool:
+    """A present-tense hazard. A repaired leak or a what-if plan is not one."""
+    if _IF_EVER.search(clause) or _HYPOTHETICAL.search(clause) or _HYPOTHETICAL_FRAME.search(clause):
+        return False
+    if _RESOLVED.search(clause) and not _hit(clause, _STILL_DANGER):
+        return False
+    if _present_patterns(clause) is not None:
+        return True
+    return bool(_present_cue(clause) and (_HAZARD_STEM.search(clause) or _SYMPTOM.search(clause)))
+
+
+def _clause_away(clause: str) -> bool:
+    """A past, hypothetical, or someone-else clause. A present cue in that clause keeps it."""
+    someone = bool(_SOMEONE_ELSE.search(clause)) and not _OUR_TOO.search(clause)
+    if someone:
+        return True
+    framed = bool(
+        _HISTORICAL.search(clause)
+        or _FINISHED.search(clause)
+        or _PAST_MARK.search(clause)
+        or _HYPOTHETICAL.search(clause)
+        or _HYPOTHETICAL_FRAME.search(clause)
+        or _IF_EVER.search(clause)
+    )
+    if not framed:
+        return False
+    if _current_danger(clause):
+        return False
+    return True
+
+
+def _active_context(text: str) -> str | None:
+    """Clauses that are happening now. Past clauses only lend an appliance noun."""
+    clauses = _split_turn(text) or [text]
+    active = [clause for clause in clauses if not _clause_away(clause)]
+    if not active:
+        return None
+    context = " ".join(active)
+    if any(_SYMPTOM.search(clause) or _HAZARD_STEM.search(clause) for clause in active):
+        extra: list[str] = []
+        for clause in clauses:
+            if not _clause_away(clause):
+                continue
+            if _SOMEONE_ELSE.search(clause) and not _OUR_TOO.search(clause):
+                continue
+            extra.extend(_CONTEXT_NOUN.findall(clause))
+        if extra:
+            context = context + " " + " ".join(extra)
+    return context
+
+
+def framed_entirely_away(text: str) -> bool:
+    """True when every clause is past, hypothetical, or about someone else's house."""
+    folded = fold(text)
+    return _active_context(folded) is None and bool(
+        _HISTORICAL.search(folded)
+        or _FINISHED.search(folded)
+        or _PAST_MARK.search(folded)
+        or _HYPOTHETICAL.search(folded)
+        or _HYPOTHETICAL_FRAME.search(folded)
+        or _IF_EVER.search(folded)
+        or _SOMEONE_ELSE.search(folded)
+    )
+
+
+def mentions_hazard_noun(text: str) -> bool:
+    """An unnegated hazard noun in a clause that is happening now.
+
+    A burst, smell, or alarm that lives only in a past or hypothetical clause
+    does not open the safety question. The booking request beside it can proceed.
+    """
+    folded = fold(text)
+    clauses = _split_turn(folded) or [folded]
+    live = [clause for clause in clauses if not _clause_away(clause)]
+    if not live:
+        return False
+    return any(
+        not _negated_at(clause, match.start())
+        for clause in live
+        for match in _HAZARD_NOUN.finditer(clause)
+    )
+
+
+def _plain_job(text: str) -> bool:
+    return bool(_PLAIN_JOB.search(text) or _PLAIN_FIXTURE.search(text))
+
+
+def plain_job_text(text: str) -> bool:
+    folded = fold(text)
+    if not _plain_job(folded):
+        return False
+    if _present_patterns(folded) is not None:
+        return False
+    if _fire_or_smoke(folded) or _gas_anywhere(folded) or _SYMPTOM.search(folded):
+        return False
+    return True
+
+
+def _scrub_instruction(text: str) -> str:
+    scrubbed = _INSTRUCTION.sub(" ", text)
+    scrubbed = re.sub(
+        r"\bas (?:a |an )?(?:fire|gas|electrical|carbon monoxide)?\s*emergenc\w*\b",
+        " ",
+        scrubbed,
+    )
+    scrubbed = re.sub(r"\b(?:fire|gas)\s+emergenc\w*\b", " ", scrubbed)
+    scrubbed = re.sub(r"\bemergenc\w*\b", " ", scrubbed)
+    scrubbed = re.sub(r"\b(?:page|send)\b.{0,32}\bon-?call\b", " ", scrubbed)
+    return scrubbed
+
+
+def _described_hazard(text: str) -> bool:
+    """A real hazard remains after the instruction phrase is removed."""
+    scrubbed = _scrub_instruction(text)
+    if _present_patterns(scrubbed) is not None:
+        return True
+    if _fire_or_smoke(scrubbed) or _gas_anywhere(scrubbed):
+        return True
+    for clause in _split_turn(scrubbed):
+        if _gas(clause) or _electrical(clause) or _water(clause):
+            return True
+    return False
+
+
+def _instruction_only(text: str) -> bool:
+    return bool(_INSTRUCTION.search(text)) and not _described_hazard(text)
+
+
+def _present_patterns(text: str) -> tuple[str, str] | None:
+    """Class patterns for hazards that do not use the textbook noun."""
+    if re.search(r"\b(rotten eggs?|sulfur|sulphur|egg smell|smell\w*\s+eggs|"
+                 r"smells? like eggs|like eggs|"
+                 r"like a leak|smells? like a leak|a leak smells|like gas)\b", text):
+        if re.search(r"\b(pilot|burner|oven|range|dryer|furnace|fireplace|meter|cooktop|stove|boiler)\b", text):
+            return "definite", "Gas"
+    if re.search(r"\bpilot\b", text) and re.search(
+        r"\b(keeps dying|keeps going out|goes out|won't stay|wont stay|will not stay)\b",
+        text,
+    ) and (_ODOR_WORD.search(text) or re.search(r"\b(eggs?|sulfur|sulphur|odor\w*|smell\w*)\b", text)):
+        return "definite", "Gas"
+    if re.search(r"\b(crackl\w*|sizzl\w*|arcing)\b", text) and re.search(
+        r"\b(wall|outlet|switch|panel|box)\b", text
+    ):
+        return "definite", "Electrical hazard"
+    if re.search(r"\bcharr\w*\b", text) and not _COOKING.search(text):
+        return "definite", "Electrical hazard"
+    if re.search(r"\bshock\w*\b", text) and re.search(r"\b(fixture|railing|rail|outlet|switch|appliance|light)\b", text):
+        return "definite", "Electrical hazard"
+    if re.search(r"\b(burning[- ]rubber|hot[- ]wire smell|smells like hot wire)\b", text):
+        return "definite", "Electrical hazard"
+    neuro = re.search(r"\b(drowsy|slurr\w*|confused|out of it|hard to follow|sleepy|woozy)\b", text)
+    closed = re.search(r"\b(door shut|door down|doors? closed|closed|shut)\b", text)
+    fuel = re.search(r"\b(heater|furnace|boiler|propane|stove|oven|fireplace|generator|engine)\b", text)
+    if neuro and closed and fuel:
+        return "definite", "Carbon monoxide"
+    if (
+        re.search(r"\b(blocked|clogged|covered|obstructed)\b", text)
+        and re.search(r"\b(exhaust|flue|vent)\b", text)
+        and re.search(r"\b(alarm|detector)\b", text)
+    ):
+        return "definite", "Carbon monoxide"
+    if (
+        re.search(r"\b(alarm|detector)\b", text)
+        and re.search(r"\b(sounding|going off|won't quit|wont quit|will not quit)\b", text)
+        and re.search(r"\b(collapsed?|unresponsive|passed out|won't wake|wont wake)\b", text)
+    ):
+        return "definite", "Carbon monoxide"
+    if (
+        re.search(r"\b(hose|supply line|water line|line|pipe)\b", text)
+        and re.search(r"\b(blew off|let go|burst\w*|split)\b", text)
+        and re.search(r"\bwater\b", text)
+        and re.search(r"\b(into|through|rooms?|bedrooms?|hall|dining)\b", text)
+    ):
+        return "definite", "Active water"
+    if re.search(r"\boverflow\w*\b", text) and re.search(r"\b(toilet|tub|sink)\b", text) and re.search(
+        r"\b(room|ceiling|underneath|below|downstairs)\b", text
+    ):
+        return "definite", "Active water"
+    if re.search(r"\b(swimming pool|lake|river)\b", text) and re.search(r"\bwater\b", text) and re.search(
+        r"\b(basement|room|floor)\b", text
+    ):
+        return "definite", "Active water"
+    if re.search(r"\b(infant|baby|newborn|toddler)\b", text) and re.search(
+        r"\b(cold to the touch|feels cold|shivering)\b", text
+    ):
+        return "definite", "Unsafe indoor temperature"
+    if re.search(r"\b(pneumonia|on oxygen)\b", text) and (
+        _COMFORT.search(text) or re.search(r"\bno heat\b", text)
+    ):
+        return "definite", "Unsafe indoor temperature"
+    return None
+
+
 _STRONG_NOW = re.compile(
     r"\b(won't stop|wont stop|will not stop|pouring|gushing|spraying|spewing|hissing|"
     r"smell|smelling|odor|odour|beeping|sparking|right now|ahora|sin parar)\b",
@@ -203,10 +489,8 @@ _WATER_I18N = re.compile(
 
 
 def _skip_clause(clause: str) -> bool:
-    """A finished event stays routine unless a hazard is happening in the same breath."""
-    if _HISTORICAL.search(clause) and not _STRONG_NOW.search(clause):
-        return True
-    return False
+    """A past or hypothetical clause is skipped. A present-tense cue in it is not."""
+    return _clause_away(clause)
 
 
 def _negated_at(clause: str, index: int) -> bool:
@@ -551,14 +835,19 @@ def _explicit_clear(text: str) -> bool:
 def _soft_electrical(text: str) -> bool:
     if re.search(r"\b(sparks?|smoke|smoking|melting|melted|scorch\w*|charred|burning|too hot|\bhot\b)\b", text):
         return False
-    return bool(re.search(r"\b(warm|slightly warm|a little warm)\b", text))
+    if re.search(r"\b(normal|naturally|expected)\b", text):
+        return False
+    return bool(re.search(r"\b(slightly warm|a little warm|a bit warm|feels warm|warm to the touch)\b", text))
 
 
 def _borderline(text: str) -> bool:
     """Uncertain wording asks a safety question instead of booking or paging."""
     if not _HEDGE.search(text):
         return False
-    if not re.search(r"\b(smell|odor|odour|damp|wet|warm|alarm|detector|outlet|panel|ceiling|furnace)\b", text):
+    if not re.search(
+        r"\b(smell|odor|odour|damp|wet|warm|alarm|detector|outlet|panel|ceiling|furnace|mark|stain|spot|discoloration|vanity)\b",
+        text,
+    ):
         return False
     if _WATER_FORCE.search(text) or _GAS_WORD.search(text):
         return False
@@ -609,7 +898,10 @@ _FUEL_BOX = re.compile(r"\b(furnace|boiler|water heater|heater|stove)\b", re.I)
 _BROWNED = re.compile(r"\b(brown|browned|blackened|blistered)\b", re.I)
 _ELEC_THING = re.compile(r"\b(outlet|receptacle|socket|plug|breaker|panel)\b", re.I)
 _TRIP_AGAIN = re.compile(r"\b(keeps opening|trips again|keeps tripping|tripped again)\b", re.I)
-_DAMP_MARK = re.compile(r"\b(damp|wet)\s+(mark|spot|stain|patch)\b", re.I)
+_DAMP_MARK = re.compile(
+    r"\b(damp|wet|dry)\s+(mark|spot|stain|patch)\b|\b(discoloration|brown spot)\b",
+    re.I,
+)
 
 
 def _hit(text: str, pattern: re.Pattern[str]) -> bool:
@@ -1019,12 +1311,37 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
     on the hazard. If the embedder cannot load, an uncertain turn asks rather
     than pretending there is no hazard.
     """
-    folded = fold(text)
-    if _past_and_quiet(folded):
+    original = text
+    full = fold(text)
+    clauses = _split_turn(full)
+    dropped_clause = bool(clauses) and len([clause for clause in clauses if not _clause_away(clause)]) < len(clauses)
+    folded = full
+    if _instruction_only(folded):
+        if _plain_job(folded) or _ORDINARY_JOB.search(folded):
+            return "none", None
+        return "ask", "Uncertain hazard"
+    if _habitual_mild(folded) and _present_patterns(folded) is None and not _fire_or_smoke(folded):
         return "none", None
-    away = _framed_away(folded)
-    if away is not None:
-        return away
+    active = _active_context(folded)
+    if active is None:
+        if _UNSURE.search(folded) and re.search(
+            r"\b(leak\w*|smell\w*|odor\w*|odour\w*|gas|alarm|smoke|furnace|ceiling|hiss\w*)\b",
+            folded,
+        ):
+            return "ask", "Uncertain hazard"
+        return "none", None
+    folded = active
+    patterned = _present_patterns(folded)
+    if patterned is not None:
+        return patterned
+    if (
+        _plain_job(folded)
+        and not _SYMPTOM.search(folded)
+        and not _fire_or_smoke(folded)
+        and not _gas_anywhere(folded)
+        and not re.search(r"\b(smoke|spark\w*|flame\w*|flooding|burst\w*)\b", folded)
+    ):
+        return "none", None
     if _battery_advice(folded) and not _other_hazard(folded):
         return "advice", "CO detector battery"
     advice = False
@@ -1068,18 +1385,24 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         or _dry_trap(folded)
         or _plain_fixture(folded)
         or _routine_service(folded)
-    ):
+    ) and not _soft_electrical(folded) and not _damp_mark(folded):
         return "none", None
     if _mild_water(folded) and not _GAS_SIGNAL.search(folded) and not _CO_HARD.search(folded):
         if not _unnegated(folded, _ELECTRICAL):
             return "none", None
     floor: tuple[str, str | None] = ("none", None)
-    if _borderline(folded) or _damp_mark(folded):
+    if _borderline(folded) or _damp_mark(folded) or _soft_electrical(folded):
+        floor = ("ask", "Uncertain hazard")
+    if _UNSURE.search(folded) and re.search(
+        r"\b(leak\w*|smell\w*|odor\w*|odour\w*|gas|alarm|smoke|furnace|ceiling|hiss\w*)\b",
+        folded,
+    ):
         floor = ("ask", "Uncertain hazard")
     from app.agent.hazard_nli import nli_opinion
     from app.agent.hazard_semantic import semantic_hazard
 
-    guessed = semantic_hazard(text)
+    semantic_text = folded if dropped_clause else original
+    guessed = semantic_hazard(semantic_text)
     if guessed[1] == "Hazard model unavailable":
         if _uncertain_without_model(folded) or floor[0] == "ask":
             return "ask", "Hazard model unavailable"
@@ -1099,7 +1422,7 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
     # It does not turn a routine clearance into a question or a page.
     if guessed[0] != "ask":
         return guessed
-    opinion = nli_opinion(text)
+    opinion = nli_opinion(semantic_text)
     if opinion[0] != "definite":
         return guessed
     soft = re.search(
@@ -1163,7 +1486,7 @@ def _battery_advice(text: str) -> bool:
 
 def _routine_context(text: str) -> bool:
     """Fee questions, appliance conversions, and a car with no fuel are not pages."""
-    if _HISTORICAL.search(text) and not _STRONG_NOW.search(text):
+    if (_HISTORICAL.search(text) or _PAST_MARK.search(text)) and not _present_cue(text) and not _HAZARD_STEM.search(text):
         return True
     if _HYPOTHETICAL.search(text) and not _GAS_SIGNAL.search(text) and not _WATER_FORCE.search(text) and not _ELECTRICAL.search(text):
         return True

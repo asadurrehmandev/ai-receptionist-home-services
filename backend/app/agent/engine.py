@@ -11,7 +11,6 @@ from uuid import uuid4
 from app.agent.calendar import Calendar, SlotTaken, new_booking_id
 from app.agent.nlu import (
     caller_id_digits,
-    classify_emergency,
     detect_intent,
     extract_city,
     extract_issue,
@@ -31,13 +30,16 @@ from app.agent.nlu import (
     is_spam,
     is_yes,
     safety_decision,
+    selection_index,
     spelled_word,
     wants_abandon,
     wants_cancel,
     wants_human,
     wants_reschedule,
 )
+from app.agent.hazard import framed_entirely_away, mentions_hazard_noun, plain_job_text
 from app.agent.scheduling import available_slots, format_slot, join_slots, latest_on_day, match_offered, parse_preference
+from app.agent.understand import assess_caller_turn, combine_safety, understand_enabled, understand_turn
 from app.config_loader import BusinessConfig
 
 
@@ -107,6 +109,8 @@ _BATTERY_ES = (
 )
 _ASK_EN = "Is anyone in danger right now? I can connect you to the on-call technician."
 _ASK_ES = "¿Hay alguien en peligro ahora mismo? Puedo comunicarlo con el técnico de guardia."
+_OFFER_EN = "Is anyone in danger right now, or would you like a person to call you back?"
+_OFFER_ES = "¿Hay alguien en peligro ahora, o prefiere que una persona le devuelva la llamada?"
 
 
 def _looks_like_verification(text: str) -> bool:
@@ -181,7 +185,7 @@ class Engine:
         if state.hazard:
             return self._escalate(state, started, state.hazard)
 
-        level, emergency = classify_emergency(raw)
+        level, emergency = assess_caller_turn(raw)
         if level == "ask" and emergency == "Hazard model unavailable":
             if state.degraded_asked:
                 level, emergency = "none", None
@@ -197,6 +201,20 @@ class Engine:
             self._fill(state, raw)
             state.phase = "hazard_check"
             state.issue = state.issue or emergency
+            if emergency == "Understander unavailable":
+                return self._finish(state, self._line(state, _OFFER_EN, _OFFER_ES), started)
+            return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
+        if (
+            level == "none"
+            and not understand_enabled()
+            and mentions_hazard_noun(raw)
+            and not plain_job_text(raw)
+            and not framed_entirely_away(raw)
+            and state.phase not in {"hazard_check", "unclear_handoff", "closed"}
+        ):
+            self._fill(state, raw)
+            state.phase = "hazard_check"
+            state.issue = state.issue or "Possible hazard"
             return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
         if level == "advice":
             self._fill(state, raw)
@@ -322,9 +340,9 @@ class Engine:
 
         if state.phase == "quote_decision":
             self._fill(state, raw)
-            if is_no(raw) and not is_yes(raw):
+            if is_no(raw) and not is_yes(raw) and selection_index(raw) is None:
                 return self._decline_quote(state, started)
-            if is_yes(raw) or state.name or state.phone:
+            if is_yes(raw) or selection_index(raw) is not None or state.name or state.phone:
                 return self._continue_intake(state, raw, started)
             return self._finish(state, self._quote_line(state) + " Should I book the diagnostic?", started)
 
@@ -392,10 +410,13 @@ class Engine:
                 parts[-1] = replacement
                 state.name = " ".join(parts)
         elif not state.name or (is_correction(text) and guess_bare_name(text, framed=True)):
+            from app.agent.nlu import _person_name_rejected, extract_introduced_name
+
             framed = state.phase == "collect_name" or state.asked_field == "name"
-            guessed = guess_bare_name(text, framed=framed)
-            if guessed and (state.phase == "collect_name" or not state.name or is_correction(text)):
-                if state.phase == "collect_name" or is_correction(text) or " " in guessed:
+            introduced = extract_introduced_name(text)
+            guessed = introduced or (guess_bare_name(text, framed=True) if framed or is_correction(text) else None)
+            if guessed and not _person_name_rejected(guessed, state.issue):
+                if framed or introduced or is_correction(text):
                     if not state.name or is_correction(text) or state.phase == "collect_name":
                         state.name = guessed
         if state.phase == "collect_issue" and not state.issue:
@@ -834,12 +855,14 @@ class Engine:
         on_clear is 'intake' after a hazard question, or 'callback' after the
         unclear-path question, where a clean no still does not name a job.
         """
-        level_now, emergency_now = classify_emergency(raw)
+        level_now, emergency_now = assess_caller_turn(raw)
         if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
             state.hazard = emergency_now
             self._fill(state, raw)
             return self._escalate(state, started, state.hazard)
         decision = safety_decision(raw)
+        if understand_enabled():
+            decision = combine_safety(raw, understand_turn(raw))
         if decision == "page":
             state.hazard = "Caller confirmed danger"
             self._fill(state, raw)

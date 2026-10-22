@@ -279,7 +279,9 @@ def detect_intent(text: str) -> str:
         r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it|"
         r"install\w*|hook\s?up|hookup|thermostat|no power|dead outlet|outlet (?:is )?dead|puddle|dripp\w*|"
         r"chilly|cold room|breaker tripped|tripped (?:the )?breaker|blank screen|tune[- ]?up|"
-        r"spigots?|hose bibs?|bibbs?|sillcocks?|water pressure|low pressure|shower pressure)\b",
+        r"spigots?|hose bibs?|bibbs?|sillcocks?|water pressure|low pressure|shower pressure|"
+        r"sump|exhaust fan|gfci|gfi|flood sensors?|softener|check-?up|checkup|replac\w*|"
+        r"landlord|rental unit|inspection)\b",
         norm,
     ):
         return "new_job"
@@ -395,7 +397,7 @@ _HARM = re.compile(
 _HEDGE_OR_URGENCY = re.compile(
     r"\b("
     r"i think so|maybe|possibly|probably|kind of|sort of|uh huh|mm-?hmm|i guess|"
-    r"not sure|unsure|hurry|quick|help|wait"
+    r"not sure|unsure|don'?t know|do not know|hurry|quick|help|wait"
     r")\b",
     re.I,
 )
@@ -469,19 +471,52 @@ def _explicit_clear(text: str) -> bool:
     return not re.findall(r"[a-z]{3,}", leftover.lower())
 
 
+_NATURAL_NO = re.compile(
+    r"\b(?:nope|nah|no)\b|"
+    r"\bnot at all\b|"
+    r"\bnothing like that\b|"
+    r"\bnot that i know of\b|"
+    r"\bwe(?:'re| are) (?:fine|ok|okay|safe|good)\b|"
+    r"\ball good\b|"
+    r"\beveryone(?:'s| is) (?:fine|ok|okay|safe|good)\b|"
+    r"\beverybody(?:'s| is) (?:fine|ok|okay|safe|good)\b|"
+    r"\bnobody(?:'s| is)?(?:\s+\w+){0,4}\s+(?:hurt|injured|in danger)|"
+    r"\bno one is (?:in )?(?:any )?(?:danger|hurt|injured)|"
+    r"\bnot an emergency\b|"
+    r"\bthe house is fine\b",
+    re.I,
+)
+_CAN_WAIT = re.compile(r"\b(?:it|this|that|and it|and this)?\s*(?:can|could)\s+wait\b", re.I)
+
+
+def _hedge_or_urgency(text: str) -> bool:
+    """'It can wait' is not urgency. A bare 'wait' or 'hurry' still is."""
+    scrubbed = _CAN_WAIT.sub(" ", text or "")
+    return bool(_HEDGE_OR_URGENCY.search(scrubbed))
+
+
+def _natural_no(text: str) -> bool:
+    return bool(_NATURAL_NO.search(text or ""))
+
+
 def safety_decision(text: str) -> str:
     """How to treat an answer to the safety question.
 
-    'clear' continues (or, on the unclear path, an office callback).
-    'callback' is a warm transfer with no on-call page.
-    'page' connects on-call. Only a clean no with no danger content is clear.
-    Anything else, including a hedge, a hurry, or an unclear answer, pages.
+    Harm, a hedge, or urgency pages. A natural no clears unless the rest of
+    the turn still describes a definite hazard. An unclear answer pages.
     """
     raw = text or ""
     if reports_harm(raw):
         return "page"
-    if _HEDGE_OR_URGENCY.search(raw):
+    if _hedge_or_urgency(raw):
         return "page"
+    if _natural_no(raw):
+        remainder = _NATURAL_NO.sub(" ", raw)
+        remainder = _CAN_WAIT.sub(" ", remainder)
+        level, _why = classify_emergency(remainder)
+        if level == "definite":
+            return "page"
+        return "clear"
     if _explicit_clear(raw):
         return "clear"
     if is_yes(raw):
@@ -782,6 +817,35 @@ def _clean_pair(text: str) -> str | None:
     return None
 
 
+def _person_name_rejected(candidate: str, issue: str | None = None) -> bool:
+    """A verb, a gerund, or a copy of the problem is not a caller's name."""
+    for token in (candidate or "").split():
+        low = token.lower().strip("'-")
+        if low in {
+            "send",
+            "smell",
+            "smells",
+            "leaking",
+            "dripping",
+            "running",
+            "coming",
+            "going",
+            "replace",
+            "install",
+            "someone",
+            "something",
+            "crackling",
+            "sizzling",
+            "burning",
+        }:
+            return True
+        if len(low) >= 6 and low.endswith("ing"):
+            return True
+    if issue and candidate and candidate.lower() in issue.lower():
+        return True
+    return False
+
+
 def extract_introduced_name(text: str) -> str | None:
     match = re.search(
         r"\b(?:my name is|this is|i am|i'm|im|it is|it's)\s+([^\W\d_](?:[^\W\d_]|['-])*(?:\s+[^\W\d_](?:[^\W\d_]|['-])*){0,3})",
@@ -805,6 +869,8 @@ def extract_introduced_name(text: str) -> str | None:
         return None
     candidate = " ".join(_proper_token(token) for token in tokens[:3])
     if not _plausible_name(candidate):
+        return None
+    if _person_name_rejected(candidate):
         return None
     return candidate
 
@@ -856,21 +922,15 @@ def extract_caller_name(turns: list[str], asked_field: str | None, current: str)
     """
     if asked_field == "name":
         found = guess_bare_name(current, framed=True)
-        if found:
+        if found and not _person_name_rejected(found):
             return found
         found = _clean_pair(current)
-        if found:
+        if found and not _person_name_rejected(found):
             return found
     for turn in reversed(turns):
         introduced = extract_introduced_name(turn)
-        if introduced and _name_allowed(introduced, framed=True):
+        if introduced and _name_allowed(introduced, framed=True) and not _person_name_rejected(introduced):
             return introduced
-    for turn in reversed(turns):
-        if _bare_name_blocked(turn):
-            continue
-        found = guess_bare_name(turn)
-        if found:
-            return found
     return None
 
 

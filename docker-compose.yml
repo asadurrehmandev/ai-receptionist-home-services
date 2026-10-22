@@ -17,6 +17,7 @@ services:
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
       HF_HUB_OFFLINE: "1"
       FASTEMBED_CACHE_PATH: /app/models
+      UNDERSTAND_EACH_TURN: "1"
     volumes:
       - ./data:/app/data
     healthcheck:

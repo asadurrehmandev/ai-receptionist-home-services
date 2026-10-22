@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import threading
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.hazard_nli import nli_ready
 from app.agent.hazard_semantic import semantic_ready
+from app.agent.understand import understand_enabled, understand_ready, understander_name
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
 from app.seed import seed_demo
@@ -26,6 +28,7 @@ from app.store import Store
 from app.voice.stream import bridge_from_settings, loads_message
 from app.voice.twilio import (
     dial_twiml,
+    filler_then_redirect,
     gather_twiml,
     public_url,
     say_and_hangup,
@@ -41,6 +44,8 @@ from app.voice.twilio import (
 _admin_ok: ContextVar[bool] = ContextVar("admin_ok", default=False)
 
 logger = logging.getLogger("receptionist")
+_turn_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_pending_turns: dict[str, concurrent.futures.Future] = {}
 
 PUBLIC_API = {"/api/health"}
 DEMO_ONLY = {"/api/demo/calls", "/api/admin/reset", "/api/admin/purge"}
@@ -93,7 +98,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health():
         semantic = semantic_ready()
         nli = nli_ready()
-        ready = semantic and nli
+        understand = understand_ready()
+        ready = semantic and nli and (understand or not understand_enabled())
         body = {
             "ok": ready,
             "business": config.name,
@@ -109,6 +115,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "voice_block_reason": _voice_block_reason(),
             "semantic_ready": semantic,
             "nli_ready": nli,
+            "understand_ready": understand,
+            "understander": understander_name() if understand_enabled() or understand else "keyword",
         }
         if not ready:
             return JSONResponse(status_code=503, content=body)
@@ -222,6 +230,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         xml = gather_twiml(started["say"], _gather_action(request), config.gather_voice, _language(started))
         return Response(content=xml, media_type="application/xml")
 
+    def _wants_filler(speech: str) -> bool:
+        return bool(
+            speech
+            and understand_enabled()
+            and understand_ready()
+            and not settings.anthropic_api_key
+        )
+
     @app.post("/api/voice/twilio/gather")
     async def twilio_gather(request: Request):
         blocked = _voice_block_reason()
@@ -234,12 +250,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         caller = form.get("From")
         call_id = store.get_call_by_external(call_sid) if call_sid else None
         speech = (form.get("SpeechResult") or "").strip()[:2000]
-        if call_id is None:
-            started = service.start("twilio", external_id=call_sid, caller_id=caller)
-            call_id = started["id"]
-            result = started if not speech else service.turn(call_id, speech, caller_id=caller)
+        resume = request.query_params.get("resume") == "1"
+        pending_key = call_sid or ""
+        if resume and pending_key in _pending_turns:
+            future = _pending_turns.pop(pending_key)
+            try:
+                result = future.result(timeout=12)
+            except Exception:
+                logger.exception("Understander turn failed")
+                result = {
+                    "say": "I couldn't check that safely. Is anyone in danger right now, or would you like a person to call you back?",
+                    "outcome": None,
+                    "language": "en",
+                }
         else:
-            result = service.turn(call_id, speech, caller_id=caller)
+            if call_id is None:
+                started = service.start("twilio", external_id=call_sid, caller_id=caller)
+                call_id = started["id"]
+                if not speech:
+                    result = started
+                elif _wants_filler(speech):
+                    _pending_turns[pending_key or call_id] = _turn_pool.submit(
+                        service.turn, call_id, speech, caller
+                    )
+                    action = _gather_action(request) + "?resume=1"
+                    xml = filler_then_redirect(action, config.gather_voice)
+                    return Response(content=xml, media_type="application/xml")
+                else:
+                    result = service.turn(call_id, speech, caller_id=caller)
+            elif _wants_filler(speech):
+                _pending_turns[pending_key or call_id] = _turn_pool.submit(
+                    service.turn, call_id, speech, caller
+                )
+                action = _gather_action(request) + "?resume=1"
+                xml = filler_then_redirect(action, config.gather_voice)
+                return Response(content=xml, media_type="application/xml")
+            else:
+                result = service.turn(call_id, speech, caller_id=caller)
         voice = _voice(result)
         language = _language(result)
         if result.get("outcome") == "escalated":

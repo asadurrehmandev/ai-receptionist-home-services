@@ -15,9 +15,8 @@ from datetime import datetime
 from time import monotonic, perf_counter
 
 from app.agent.engine import Engine, SessionState, TurnResult
-from app.agent.hazard import _RANK
+from app.agent.hazard import _RANK, mentions_hazard_noun, plain_job_text
 from app.agent.nlu import (
-    classify_emergency,
     detect_language,
     extract_city,
     extract_phone,
@@ -30,6 +29,7 @@ from app.agent.nlu import (
     wants_human,
 )
 from app.agent.scheduling import available_slots, format_slot, join_slots, match_offered, parse_preference
+from app.agent.understand import assess_caller_turn, understand_enabled
 from app.agent.speech import EMPATHY_IDS, FIELDS, INTENTS, render
 
 TOOL_SPECS = [
@@ -162,9 +162,14 @@ class Dialog:
         if state.language == "en" and detected != "en":
             state.language = detected
         state.turn_selected = state.selected if state.phase == "confirm" else None
-        local = classify_emergency(raw)
+        local = assess_caller_turn(raw)
         remote = ("none", None)
-        if self.model is not None and _RANK.get(local[0], 0) >= _RANK["ask"] and local[0] != "definite":
+        if (
+            not understand_enabled()
+            and self.model is not None
+            and _RANK.get(local[0], 0) >= _RANK["ask"]
+            and local[0] != "definite"
+        ):
             remote = _claude_hazard(self.model, raw)
         level, label = _raise_hazard(local, remote)
         if (
@@ -173,7 +178,17 @@ class Dialog:
             and _RANK.get(local[0], 0) >= _RANK["ask"]
         ):
             state.hazard = label
-        if state.hazard or wants_human(raw) or level in {"definite", "ask", "advice"} or state.language != "en":
+        if (
+            state.hazard
+            or wants_human(raw)
+            or level in {"definite", "ask", "advice"}
+            or (
+                not understand_enabled()
+                and mentions_hazard_noun(raw)
+                and not plain_job_text(raw)
+            )
+            or state.language != "en"
+        ):
             return self.engine.handle(state, raw)
         if self.model is None:
             return self.engine.handle(state, raw)

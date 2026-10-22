@@ -98,6 +98,17 @@ def stream_ws_url(request: Request, settings: Settings) -> str:
     return base + "/api/voice/stream"
 
 
+def filler_then_redirect(action: str, voice: str) -> str:
+    """Play a fixed line, then come back. The understander may still be running."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f'<Say voice="{escape(voice)}">One moment.</Say>'
+        f'<Redirect method="POST">{escape(action)}</Redirect>'
+        "</Response>"
+    )
+
+
 def gather_twiml(say: str, action: str, voice: str, language: str = "en-US") -> str:
     spoken = escape(say)
     return (
