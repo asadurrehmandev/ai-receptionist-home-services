@@ -63,7 +63,7 @@ def test_a_heat_pump_check_continues_and_field_instructions_do_not_page(tmp_path
     from app.agent.hazard_head import head_ready
 
     if head_ready():
-        expected = "minilm-head"
+        expected = "e5-head"
     elif semantic_ready() and nli_ready():
         expected = "keyword+nli"
     else:

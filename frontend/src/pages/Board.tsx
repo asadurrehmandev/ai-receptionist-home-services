@@ -78,58 +78,56 @@ export function Board() {
         </div>
       )}
 
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(260px,0.7fr)]">
-        <section aria-label="Recent calls">
-          <div className="mb-2 flex items-baseline justify-between">
-            <h2 className="text-md font-semibold">Recent calls</h2>
-            <Link to="/calls" className="text-sm text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              All calls
-            </Link>
-          </div>
-          {hasCalls ? (
-            <CallsTable calls={data.recent_calls} />
-          ) : (
-            <Empty
-              title="No calls yet"
-              body="Try the simulator to place a test call. Booked jobs show up in this table."
-              action={
-                <Button asChild>
-                  <Link to="/simulator">Open simulator</Link>
-                </Button>
-              }
-            />
-          )}
-        </section>
+      <section aria-label={scheduleLabel} className="rounded-lg border border-border bg-card">
+        <div className="flex items-baseline justify-between border-b border-border px-3 py-2">
+          <h2 className="text-md font-semibold">{scheduleLabel}</h2>
+          <Link to="/calendar" className="text-sm text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Calendar
+          </Link>
+        </div>
+        {schedule.length === 0 ? (
+          <p className="px-3 py-3 text-sm text-muted-foreground">No visits today.</p>
+        ) : (
+          <ul className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-3">
+            {schedule.map((job) => (
+              <li key={job.id} className="bg-card">
+                <Link
+                  to={job.call_id ? `/calls/${job.call_id}` : "/calendar"}
+                  className="flex items-baseline gap-3 px-3 py-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <span className="w-16 shrink-0 text-sm tabular-nums text-muted-foreground">{formatClock(job.start)}</span>
+                  <span className="min-w-0 truncate text-sm font-medium">
+                    <CallerName name={job.name} phone={job.phone} />
+                  </span>
+                  <span className="ml-auto hidden min-w-0 truncate text-sm text-muted-foreground sm:inline">{job.issue || "Visit"}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-        <section aria-label={scheduleLabel} className="rounded-lg border border-border bg-card">
-          <div className="flex items-baseline justify-between border-b border-border px-3 py-2">
-            <h2 className="text-md font-semibold">{scheduleLabel}</h2>
-            <Link to="/calendar" className="text-sm text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              Calendar
-            </Link>
-          </div>
-          {schedule.length === 0 ? (
-            <p className="px-3 py-4 text-sm text-muted-foreground">No visits today.</p>
-          ) : (
-            <ul>
-              {schedule.map((job) => (
-                <li key={job.id} className="border-b border-border last:border-0">
-                  <Link
-                    to={job.call_id ? `/calls/${job.call_id}` : "/calendar"}
-                    className="flex items-start gap-3 px-3 py-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  >
-                    <span className="w-16 shrink-0 pt-0.5 font-mono text-xs tabular-nums text-subtle">{formatClock(job.start)}</span>
-                    <span className="min-w-0 border-l-[3px] border-primary pl-2">
-                      <span className="block truncate text-xs font-semibold">{job.name || formatPhone(job.phone)}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{job.issue || "–"}</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      </div>
+      <section aria-label="Recent calls">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="text-md font-semibold">Recent calls</h2>
+          <Link to="/calls" className="text-sm text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            All calls
+          </Link>
+        </div>
+        {hasCalls ? (
+          <CallsTable calls={data.recent_calls} />
+        ) : (
+          <Empty
+            title="No calls yet"
+            body="Try the simulator to place a test call. Booked jobs show up in this table."
+            action={
+              <Button asChild>
+                <Link to="/simulator">Open simulator</Link>
+              </Button>
+            }
+          />
+        )}
+      </section>
     </div>
   );
 }

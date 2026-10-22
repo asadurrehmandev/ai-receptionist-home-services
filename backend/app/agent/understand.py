@@ -165,7 +165,7 @@ def understander_name() -> str:
 def classifier_mode() -> str:
     """The path that actually labels a live turn. A model file on disk is not a mode.
 
-    With no API key and the learned head loaded, the screen is minilm-head.
+    With no API key and the learned head loaded, the screen is e5-head.
     Claude is only the optional understander.
     """
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -175,7 +175,7 @@ def classifier_mode() -> str:
     from app.agent.hazard_semantic import semantic_ready
 
     if head_ready():
-        return "minilm-head"
+        return "e5-head"
     if semantic_ready() and nli_ready():
         return "keyword+nli"
     return "keyword"

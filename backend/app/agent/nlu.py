@@ -789,6 +789,33 @@ def house_correction(text: str) -> tuple[str, str] | None:
 
 
 _NOT_A_STREET = re.compile(r"\b(?:inside|outside|with|degrees?|years?|year-old)\b", re.I)
+_CALLE = re.compile(
+    r"\b((?:\d{1,6}\s+)?(?:calle|avenida|avda|camino|paseo|bulevar)\s+"
+    r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9.'-]+(?:\s+[A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9.'-]+){0,4}"
+    r"(?:\s+\d{1,6})?)\b",
+    re.I,
+)
+_SUFFIX_THEN_NUMBER = re.compile(
+    rf"\b((?:[A-Za-z0-9.'-]+\s+){{1,5}}(?:{STREET_SUFFIX})\s+\d{{1,6}})\b",
+    re.I,
+)
+
+
+def _street_number_last(source: str) -> str | None:
+    """Spanish 'calle Name 2200' and English 'Name Street 2200'."""
+    for pattern in (_CALLE, _SUFFIX_THEN_NUMBER):
+        match = pattern.search(source or "")
+        if not match:
+            continue
+        body = match.group(1).strip(" ,.")
+        if not re.search(r"\d", body):
+            continue
+        if _NOT_A_STREET.search(body):
+            continue
+        if re.search(r"\b(yes|yeah|earliest|tomorrow|phone|number)\b", body, re.I):
+            continue
+        return _tidy_street(body)
+    return None
 
 
 def extract_street(text: str, cities: tuple[str, ...] = (), answering: bool = False) -> str | None:
@@ -804,6 +831,9 @@ def extract_street(text: str, cities: tuple[str, ...] = (), answering: bool = Fa
         body = match.group(1)
         if not _NOT_A_STREET.search(body):
             return _with_unit(_tidy_street(body), source)
+    reversed_street = _street_number_last(source)
+    if reversed_street:
+        return _with_unit(reversed_street, source)
     if not answering:
         return None
     city_pattern = "|".join(re.escape(city) for city in cities) if cities else r"$^"
@@ -861,6 +891,67 @@ def spelled_word(text: str) -> str | None:
     return None
 
 
+_NAME_PARTICLES = {
+    "ur",
+    "bin",
+    "ibn",
+    "bint",
+    "van",
+    "von",
+    "de",
+    "da",
+    "di",
+    "del",
+    "della",
+    "dos",
+    "das",
+    "du",
+    "la",
+    "le",
+    "el",
+    "al",
+    "ter",
+    "ten",
+    "den",
+    "der",
+    "af",
+}
+_NOT_NAME_WORDS = {
+    "due",
+    "maintenance",
+    "book",
+    "booking",
+    "schedule",
+    "appointment",
+    "want",
+    "wanna",
+    "need",
+    "quiero",
+    "queria",
+    "agendar",
+    "agendo",
+    "reservar",
+    "reserva",
+    "flush",
+    "repair",
+    "quote",
+    "service",
+    "servicing",
+    "cita",
+    "visita",
+    "quero",
+    "marcar",
+    "gusto",
+    "please",
+    "yes",
+    "yeah",
+    "yep",
+    "si",
+    "sí",
+    "claro",
+}
+
+
 def _proper_token(token: str) -> str:
     if "-" in token:
         return "-".join(_proper_token(part) for part in token.split("-"))
@@ -869,13 +960,38 @@ def _proper_token(token: str) -> str:
     return token[:1].upper() + token[1:]
 
 
+def _format_name(parts: list[str]) -> str:
+    """Keep interior particles in their lowercase form."""
+    formatted: list[str] = []
+    for index, part in enumerate(parts):
+        if index > 0 and part.lower() in _NAME_PARTICLES:
+            formatted.append(part.lower())
+        else:
+            formatted.append(_proper_token(part))
+    return " ".join(formatted)
+
+
+def _intent_not_a_name(text: str) -> bool:
+    """Booking talk and intent phrases are not a caller's name, in any language we book."""
+    tokens = re.findall(r"[^\W\d_]+", text or "")
+    if any(token.lower() in _NOT_NAME_WORDS for token in tokens):
+        return True
+    return bool(
+        re.search(
+            r"\b(want to book|i want to|quiero agendar|yes i want|si quiero|sí quiero|quero marcar)\b",
+            text or "",
+            re.I,
+        )
+    )
+
+
 def _name_chars(token: str) -> str:
     return "".join(char for char in token if char.isalpha() or char in "-'")
 
 
 def _plausible_name(value: str) -> bool:
     parts = value.split()
-    if not 1 <= len(parts) <= 3:
+    if not 1 <= len(parts) <= 6:
         return False
     for part in parts:
         if part.lower() in NAME_STOP:
@@ -969,7 +1085,7 @@ def _person_name_rejected(candidate: str, issue: str | None = None) -> bool:
 
 def extract_introduced_name(text: str) -> str | None:
     match = re.search(
-        r"\b(?:my name is|this is|i am|i'm|im|it is|it's|me llamo|mi nombre es|soy)\s+([^\W\d_](?:[^\W\d_]|['’-])*(?:\s+[^\W\d_](?:[^\W\d_]|['’-])*){0,3})",
+        r"\b(?:my name is|this is|i am|i'm|im|it is|it's|me llamo|mi nombre es|soy)\s+([^\W\d_](?:[^\W\d_]|['’-])*(?:\s+[^\W\d_](?:[^\W\d_]|['’-])*){0,5})",
         text,
         re.I,
     )
@@ -986,9 +1102,11 @@ def extract_introduced_name(text: str) -> str | None:
     tokens = [token for token in tokens if token and token.lower() not in NAME_STOP]
     if not tokens or tokens[0].lower() in NAME_STOP:
         return None
+    if _intent_not_a_name(" ".join(tokens)) or _intent_not_a_name(chunk):
+        return None
     if len(tokens) == 1:
         return None
-    candidate = " ".join(_proper_token(token) for token in tokens[:3])
+    candidate = _format_name(tokens[:6])
     if not _plausible_name(candidate):
         return None
     if _person_name_rejected(candidate):
@@ -1045,7 +1163,7 @@ def _leading_person(text: str) -> bool:
         return True
     tokens = re.findall(r"[^\W\d_]+(?:['’-][^\W\d_]+)?", text or "")
     kept = [token for token in tokens if token.lower() not in NAME_STOP and len(token) > 1]
-    return 2 <= len(kept) <= 3
+    return 2 <= len(kept) <= 6
 
 
 def _not_a_person_name(text: str) -> bool:
@@ -1082,19 +1200,28 @@ def guess_bare_name(text: str, framed: bool = False) -> str | None:
         return None
     if framed and _APPLIANCE_WORD.search(text or "") and introduced is None:
         return None
+    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in (text or "")).strip()
+    parts = [part for part in cleaned.split() if part]
+    if framed and 2 <= len(parts) <= 6 and not any(part.lower() in NAME_STOP for part in parts):
+        if not _intent_not_a_name(" ".join(parts)):
+            candidate = _format_name(parts)
+            if _name_allowed(candidate, framed=True):
+                return candidate
     trailing = re.findall(r"\b([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\s+([A-Z][a-z]+(?:['-][A-Z][a-z]+)?)\b", text or "")
     if trailing:
         first, last = trailing[-1]
         candidate = f"{first} {last}"
-        if _name_allowed(candidate, framed=framed):
+        if _name_allowed(candidate, framed=True) and not _intent_not_a_name(candidate):
             return candidate
-    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in (text or "")).strip()
-    parts = [part for part in cleaned.split() if part]
-    if not 2 <= len(parts) <= 3:
+    if _intent_not_a_name(cleaned):
+        return None
+    if not 2 <= len(parts) <= 6:
         return None
     if any(part.lower() in NAME_STOP for part in parts):
         return None
-    candidate = " ".join(_proper_token(part) for part in parts)
+    if _intent_not_a_name(" ".join(parts)):
+        return None
+    candidate = _format_name(parts)
     if not _name_allowed(candidate, framed=framed):
         return None
     return candidate
@@ -1103,6 +1230,8 @@ def guess_bare_name(text: str, framed: bool = False) -> str | None:
 def fallback_name(text: str) -> str:
     """A last-resort name. Empty when the utterance is a phone, ZIP, address, markup, or code."""
     if _not_a_person_name(text):
+        return ""
+    if _intent_not_a_name(text):
         return ""
     if _CODEISH.search(text or "") or _TEMPLATE_NAME.search(text or "") or _MARKUP_TAG.search(text or ""):
         return ""
@@ -1119,7 +1248,7 @@ def fallback_name(text: str) -> str:
             if not letters:
                 return "Caller"
         return ""
-    candidate = " ".join(_proper_token(part) for part in tokens[:3])
+    candidate = _format_name(tokens[:6])
     if not _plausible_name(candidate) or _person_name_rejected(candidate):
         return ""
     return candidate

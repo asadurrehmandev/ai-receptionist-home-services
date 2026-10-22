@@ -77,6 +77,9 @@ class SessionState:
     unclear_count: int = 0
     asked_field: str | None = None
     name_rejects: int = 0
+    address_rejects: int = 0
+    phone_rejects: int = 0
+    issue_rejects: int = 0
     name_confidence: str | None = None
     address_from_prompt: bool = False
     address_read_back: bool = False
@@ -205,7 +208,10 @@ class Engine:
 
         spoken = raw
         level, emergency = assess_caller_turn(spoken)
-        if _instruction_with_slot(spoken) and level == "ask":
+        from app.agent.hazard import _instruction_only, prepare
+
+        if _instruction_only(prepare(spoken)) and level in {"ask", "definite"}:
+            # Hazard words that live only inside a jailbreak sentence are not a page.
             level, emergency = "none", None
         if level == "ask" and emergency == "Hazard model unavailable":
             if state.degraded_asked:
@@ -323,6 +329,10 @@ class Engine:
         if state.phase in {"collect_issue", "collect_name", "collect_phone", "collect_address", "collect_zip"}:
             self._fill(state, raw)
             if state.phase == "collect_issue" and not state.issue:
+                state.issue_rejects += 1
+                if state.issue_rejects >= 2:
+                    state.phase = "unclear_handoff"
+                    return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
                 return self._finish(
                     state,
                     self._line(state, "Tell me a bit more about what's going wrong.", "Cuénteme un poco más qué está fallando."),
@@ -331,6 +341,9 @@ class Engine:
             if state.phase == "collect_name" and not state.name:
                 return self._reject_name(state, raw, started)
             if state.phase == "collect_phone" and not state.phone:
+                state.phone_rejects += 1
+                if state.phone_rejects >= 3:
+                    return self._slot_handoff(state, started, "phone number", "teléfono")
                 return self._finish(
                     state,
                     self._line(
@@ -341,6 +354,9 @@ class Engine:
                     started,
                 )
             if state.phase == "collect_address" and not state.street:
+                state.address_rejects += 1
+                if state.address_rejects >= 3:
+                    return self._slot_handoff(state, started, "street address", "dirección")
                 return self._finish(
                     state,
                     self._line(
@@ -360,12 +376,13 @@ class Engine:
 
         if state.phase == "quote_decision":
             self._fill(state, raw)
-            if not state.name:
-                named = guess_bare_name(raw, framed=True)
-                if named:
-                    state.name = named
             if is_no(raw) and not is_yes(raw) and selection_index(raw) is None:
                 return self._decline_quote(state, started)
+            from app.agent.nlu import _intent_not_a_name
+
+            named = guess_bare_name(raw, framed=True)
+            if named and not state.name and not _intent_not_a_name(named):
+                state.name = named
             if is_yes(raw) or selection_index(raw) is not None or state.name or state.phone:
                 return self._continue_intake(state, raw, started)
             from app.agent.nlu import _not_a_person_name
@@ -373,6 +390,9 @@ class Engine:
             if _not_a_person_name(raw):
                 return self._reject_name(state, raw, started)
             return self._finish(state, self._quote_line(state) + " Should I book the diagnostic?", started)
+
+        if state.phase == "callback_offer":
+            return self._on_callback_offer(state, raw, started)
 
         if state.phase == "offer":
             self._fill(state, raw)
@@ -915,8 +935,60 @@ class Engine:
         return ""
 
     def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
-        """The answer to the unclear-path safety question. It does not ask again."""
-        return self._safety_answer(state, raw, started, on_clear="callback")
+        """The safety question after an unclear call. A clean no is a different question.
+
+        Yes still pages. No does not. The follow-up asks whether to call back,
+        and yes on that question is a callback, not a page.
+        """
+        level_now, emergency_now = assess_caller_turn(raw)
+        if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
+            state.hazard = emergency_now
+            self._fill(state, raw)
+            return self._escalate(state, started, state.hazard)
+        decision = safety_decision(raw)
+        if understand_enabled():
+            decision = combine_safety(raw, understand_turn(raw))
+        if decision == "page":
+            state.hazard = "Caller confirmed danger"
+            self._fill(state, raw)
+            return self._escalate(state, started, state.hazard)
+        if decision == "callback":
+            self._fill(state, raw)
+            return self._office_callback(state, started)
+        state.phase = "callback_offer"
+        return self._finish(
+            state,
+            self._line(
+                state,
+                "Should I have someone call you back?",
+                "¿Quiere que alguien le devuelva la llamada?",
+            ),
+            started,
+        )
+
+    def _on_callback_offer(self, state: SessionState, raw: str, started: float) -> TurnResult:
+        """Yes here means call back. It does not mean there is danger."""
+        if is_no(raw) and not is_yes(raw):
+            state.outcome = "missed"
+            state.phase = "closed"
+            return self._finish(state, "No problem. Call us back when you are ready. Goodbye.", started)
+        return self._office_callback(state, started)
+
+    def _slot_handoff(self, state: SessionState, started: float, field_en: str, field_es: str) -> TurnResult:
+        """Stop re-asking a slot and hand the call to a person with what we have."""
+        state.outcome = "callback"
+        state.phase = "closed"
+        state.intent = state.intent or "handoff"
+        say = self._line(
+            state,
+            f"I'm having trouble with the {field_en}. I'll have someone from the office call you back.",
+            f"No pude anotar la {field_es}. Alguien de la oficina le devolverá la llamada.",
+        )
+        events = [
+            {"type": "lead", "payload": _lead_payload(state, "callback")},
+            {"type": "webhook", "payload": self._webhook(state, "lead.callback", None)},
+        ]
+        return self._finish(state, say, started, events)
 
     def _reject_name(self, state: SessionState, raw: str, started: float) -> TurnResult:
         """Two failed names on any path that is collecting a name become a callback."""

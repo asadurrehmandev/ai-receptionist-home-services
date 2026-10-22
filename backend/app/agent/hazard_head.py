@@ -1,19 +1,21 @@
-"""Learned hazard and service heads on a multilingual MiniLM embedding.
+"""Learned hazard and service heads on multilingual-e5-large.
 
-The head is a multinomial logistic regression. It is the base screen.
-Hand rules may raise its level. They do not lower it. If the weights or the
-embedder are missing, callers fall back to the rules alone.
-
-The vector is the sentence embedding plus a hashed character-and-word
-sketch. The sketch is what lets typos and romanized wording move the
-score when the sentence model keeps those lines far from English.
+The head is a multinomial logistic regression on the sentence embedding,
+its cosine to family centroids, and a hashed word-and-character sketch.
+It is the base screen. Hand rules may raise its level. They do not lower a
+page, except that a battery chirp stays advice.
 
 Labels are emergency, ask_safety, routine, and other. A second head on the
 same vector picks a service for ordinary booking.
+
+Thresholds are chosen on a validation split and stored with the weights.
+A high emergency score pages. A middle band asks the safety question.
+A low score proceeds.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +24,8 @@ WORD_DIM = 1024
 CHAR_DIM = 1024
 WORD_SCALE = 2.2
 CHAR_SCALE = 0.7
+COS_SCALE = 4.0
+EMBED_MODEL = "intfloat/multilingual-e5-large"
 
 HAZARD_LABELS = ("emergency", "ask_safety", "routine", "other")
 SERVICE_LABELS = (
@@ -65,61 +69,48 @@ SERVICE_ISSUE = {
     "lighting": "Lighting",
 }
 
-# Asymmetric: a high emergency probability pages. Anything uncertain that still
-# carries hazard mass asks. A confident routine or other line can be booked.
-# The word head uses a lower page bar. It only fires when the spelling itself
-# is an emergency, which is how romanized and typo lines page without pulling
-# a mild faucet leak over the line.
-EMERGENCY_MIN = 0.86
-WORD_EMERGENCY_MIN = 0.60
-ROUTINE_MIN = 0.46
-OTHER_MIN = 0.42
-ASK_MASS = 0.33
+# Defaults until a trained file replaces them. The file is the source of truth.
+PAGE_MIN = 0.80
+ASK_MIN = 0.45
+PAGE_MARGIN = 0.15
+ROUTINE_LOCK = 0.70
 
 _WEIGHTS: dict | None | bool = None
+_MODEL: object | None | bool = None
 
 
 def decide(probs: np.ndarray) -> str:
     """Map class probabilities to emergency, ask_safety, routine, or other.
 
-    Page only on a confident emergency that beats routine. A strong ask, or
-    an emergency that leads while routine is weak, asks instead of booking.
-    A competitive routine probability stays bookable.
+    High emergency probability pages. A middle band asks. A confident routine
+    score proceeds even if a little hazard mass remains.
     """
     p_em, p_ask, p_routine, p_other = (float(probs[0]), float(probs[1]), float(probs[2]), float(probs[3]))
-    if p_em >= EMERGENCY_MIN and p_em >= p_ask and (p_em - p_routine) >= 0.18:
+    if p_em >= PAGE_MIN and p_em >= p_ask and (p_em - p_routine) >= PAGE_MARGIN:
         return "emergency"
-    if p_ask >= 0.66 and p_ask >= p_routine and p_ask >= p_em:
-        return "ask_safety"
-    if p_em >= 0.50 and p_routine < 0.05 and p_em >= p_ask:
+    if p_routine >= ROUTINE_LOCK and p_routine >= p_em and p_routine >= p_ask:
+        return "routine"
+    if (p_em >= ASK_MIN and p_em >= p_routine) or (p_ask >= ASK_MIN and p_ask >= p_routine and p_ask >= p_em):
         return "ask_safety"
     if p_routine >= p_other:
         return "routine"
     return "other"
 
 
-def word_pages(probs: np.ndarray) -> bool:
-    """True when the spelling head is sure this is an emergency."""
-    p_em, p_ask, p_routine = (float(probs[0]), float(probs[1]), float(probs[2]))
-    return p_em >= WORD_EMERGENCY_MIN and p_em >= p_ask and (p_em - p_routine) >= 0.18
-
-
-def spelling_raises(full: np.ndarray, spelling: np.ndarray | None) -> bool:
-    """Let the spelling head page only in the embedding's 'other' region.
-
-    Romanized lines sit near names, so P(other) competes with P(routine).
-    An ordinary English job, even one that mentions gas or an alarm, has
-    P(routine) clearly ahead of P(other) and is left to the embedding head.
-    """
-    if spelling is None or not word_pages(spelling):
-        return False
-    p_routine = float(full[2])
-    p_other = float(full[3])
-    return p_other >= 0.10 and p_other + 0.02 >= p_routine
-
-
 def _path() -> Path:
     return Path(__file__).resolve().parent / "data" / "hazard_head.npz"
+
+
+def _apply_thresholds(loaded: np.lib.npyio.NpzFile) -> None:
+    global PAGE_MIN, ASK_MIN, PAGE_MARGIN, ROUTINE_LOCK
+    if "page_min" in loaded:
+        PAGE_MIN = float(loaded["page_min"])
+    if "ask_min" in loaded:
+        ASK_MIN = float(loaded["ask_min"])
+    if "page_margin" in loaded:
+        PAGE_MARGIN = float(loaded["page_margin"])
+    if "routine_lock" in loaded:
+        ROUTINE_LOCK = float(loaded["routine_lock"])
 
 
 def _weights() -> dict | None:
@@ -133,24 +124,55 @@ def _weights() -> dict | None:
         _WEIGHTS = False
         return None
     loaded = np.load(path)
+    _apply_thresholds(loaded)
     _WEIGHTS = {
         "hazard_W": np.asarray(loaded["hazard_W"], dtype=np.float32),
         "hazard_b": np.asarray(loaded["hazard_b"], dtype=np.float32),
         "service_W": np.asarray(loaded["service_W"], dtype=np.float32),
         "service_b": np.asarray(loaded["service_b"], dtype=np.float32),
+        "centroids": np.asarray(loaded["centroids"], dtype=np.float32) if "centroids" in loaded else None,
+        "proto_emergency": np.asarray(loaded["proto_emergency"]) if "proto_emergency" in loaded else None,
+        "page_t": float(loaded["page_t"]) if "page_t" in loaded else None,
+        "ask_t": float(loaded["ask_t"]) if "ask_t" in loaded else None,
     }
-    if "word_W" in loaded:
-        _WEIGHTS["word_W"] = np.asarray(loaded["word_W"], dtype=np.float32)
-        _WEIGHTS["word_b"] = np.asarray(loaded["word_b"], dtype=np.float32)
     return _WEIGHTS
+
+
+def _cache_dir() -> str | None:
+    return os.environ.get("FASTEMBED_CACHE_PATH") or None
+
+
+def _e5():
+    """The multilingual embedder. None when the weights are not on disk."""
+    global _MODEL
+    if _MODEL is False:
+        return None
+    if _MODEL is not None:
+        return _MODEL
+    try:
+        from fastembed import TextEmbedding
+    except Exception:
+        _MODEL = False
+        return None
+    kwargs = {"cache_dir": _cache_dir()} if _cache_dir() else {}
+    try:
+        _MODEL = TextEmbedding(EMBED_MODEL, local_files_only=True, **kwargs)
+    except Exception:
+        if os.environ.get("HF_HUB_OFFLINE") == "1":
+            _MODEL = False
+            return None
+        try:
+            _MODEL = TextEmbedding(EMBED_MODEL, **kwargs)
+        except Exception:
+            _MODEL = False
+            return None
+    return _MODEL
 
 
 def head_ready() -> bool:
     if _weights() is None:
         return False
-    from app.agent.hazard_semantic import semantic_ready
-
-    return semantic_ready()
+    return _e5() is not None
 
 
 def _bucket(token: str, dim: int) -> int:
@@ -163,12 +185,7 @@ def _bucket(token: str, dim: int) -> int:
 
 
 def _sketch(texts: list[str]) -> np.ndarray:
-    """Word unigrams and bigrams, plus character grams, on separate scales.
-
-    Each channel is normalized on its own so a long character stream cannot
-    drown the words. Words are what separate 'gas boo' from a person's name
-    when the sentence embedding keeps them close.
-    """
+    """Word unigrams and bigrams, plus character grams, on separate scales."""
     words = np.zeros((len(texts), WORD_DIM), dtype=np.float32)
     chars = np.zeros((len(texts), CHAR_DIM), dtype=np.float32)
     for i, text in enumerate(texts):
@@ -193,22 +210,43 @@ def _sketch(texts: list[str]) -> np.ndarray:
     return np.concatenate([words * WORD_SCALE, chars * CHAR_SCALE], axis=1)
 
 
+def embed_texts(texts: list[str]) -> np.ndarray | None:
+    """L2-normalized e5 embeddings. The query prefix is required by e5."""
+    model = _e5()
+    if model is None:
+        return None
+    cleaned = [" ".join((text or "").split()) for text in texts]
+    prefixed = [f"query: {text}" if text else "query: " for text in cleaned]
+    try:
+        rows = [np.asarray(vector, dtype=np.float32) for vector in model.embed(prefixed)]
+    except Exception:
+        return None
+    if not rows:
+        return None
+    matrix = np.vstack(rows)
+    matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9
+    return matrix
+
+
+def compose_features(
+    embeddings: np.ndarray,
+    texts: list[str],
+    centroids: np.ndarray | None = None,
+    proto_emergency: np.ndarray | None = None,
+) -> np.ndarray:
+    """The e5 embedding. Extra channels were drowning the direction that separates hazards."""
+    del texts, centroids, proto_emergency
+    return np.asarray(embeddings, dtype=np.float32)
+
+
 def featurize(texts: list[str]) -> np.ndarray | None:
-    """Embedding plus the hashed sketch. None when the embedder cannot run."""
+    """Full vector. None when the embedder or the centroids cannot run."""
     cleaned = [" ".join((text or "").split()) for text in texts]
     if not any(cleaned):
         return None
-    from app.agent.hazard_semantic import _embed, semantic_ready
-
-    if not semantic_ready():
+    if _weights() is None:
         return None
-    try:
-        emb = np.asarray(_embed(cleaned), dtype=np.float32)
-    except Exception:
-        return None
-    norms = np.linalg.norm(emb, axis=1, keepdims=True) + 1e-9
-    emb = emb / norms
-    return np.concatenate([emb, _sketch(cleaned)], axis=1)
+    return embed_texts(cleaned)
 
 
 def _vector(text: str) -> np.ndarray | None:
@@ -232,19 +270,9 @@ def hazard_probs(text: str) -> np.ndarray | None:
     vector = _vector(text)
     if weights is None or vector is None:
         return None
+    if vector.shape[0] != weights["hazard_W"].shape[1]:
+        return None
     return _softmax(weights["hazard_W"] @ vector + weights["hazard_b"])
-
-
-def word_probs(text: str) -> np.ndarray | None:
-    """Spelling-head probabilities. None when that head was not trained."""
-    weights = _weights()
-    vector = _vector(text)
-    if weights is None or vector is None or "word_W" not in weights:
-        return None
-    sketch = vector[384:]
-    if sketch.shape[0] != weights["word_W"].shape[1]:
-        return None
-    return _softmax(weights["word_W"] @ sketch + weights["word_b"])
 
 
 def confident_routine(text: str) -> bool:
@@ -266,18 +294,11 @@ def head_level(text: str) -> tuple[str, str | None] | None:
             return "none", None
     except Exception:
         target = text or ""
-    vector = _vector(target)
-    weights = _weights()
-    if vector is None or weights is None:
+    probs = hazard_probs(target)
+    if probs is None:
         return None
-    if vector.shape[0] != weights["hazard_W"].shape[1]:
-        return None
-    probs = _softmax(weights["hazard_W"] @ vector + weights["hazard_b"])
     label = decide(probs)
-    spelling = None
-    if "word_W" in weights and weights["word_W"].shape[1] == vector.shape[0] - 384:
-        spelling = _softmax(weights["word_W"] @ vector[384:] + weights["word_b"])
-    if label == "emergency" or spelling_raises(probs, spelling):
+    if label == "emergency":
         return "definite", _family(text)
     if label == "ask_safety":
         return "ask", "Uncertain hazard"
@@ -287,19 +308,18 @@ def head_level(text: str) -> tuple[str, str | None] | None:
 def _family(text: str) -> str:
     """A display label after the head has already decided to page."""
     folded = (text or "").lower()
-    tokens = set(folded.replace(",", " ").split())
-    if tokens & {"co", "monoxide", "monoxido", "chakkar", "dizzy", "headache", "dard"} or any(
-        word in folded for word in ("monox", "carbon", "dolor de cabeza")
-    ):
+    if any(word in folded for word in ("monox", "carbon", "co alarm", "co detector", "dolor de cabeza", "dard")):
         return "Carbon monoxide"
-    if any(word in folded for word in ("spark", "chispa", "outlet", "breaker", "enchufe", "cord", "smoke", "humo")):
-        if any(word in folded for word in ("water", "agua", "pani", "steam", "vapor")):
-            return "Electrical hazard"
-    if any(word in folded for word in ("gas", "propane", "boo", "olor a gas", "huele")):
+    if any(word in folded for word in ("spark", "chispa", "smoke", "humo", "dhuan", "faísca", "faisca", "شرار")):
+        return "Electrical hazard"
+    if any(word in folded for word in ("sewage", "sewer", "aguas negras", "esgoto")):
+        return "Sewage"
+    if any(word in folded for word in ("heat", "heater", "furnace", "cooling", "calor", "aquecimento", "हीटर", "ہیٹر")):
+        if any(word in folded for word in ("baby", "infant", "elderly", "abuela", "dadi", "lola", "جدة", "جدتي")):
+            return "Unsafe indoor temperature"
+    if any(word in folded for word in ("gas", "propane", "boo", "olor a gas", "huele", "gás", "غاز")):
         return "Gas"
-    if any(word in folded for word in ("steam", "vapor", "burn", "scald", "jal ")) or "quem" in folded:
-        return "Active water"
-    if any(word in folded for word in ("water", "agua", "pani", "flood", "burst", "pipe")):
+    if any(word in folded for word in ("water", "agua", "pani", "paani", "flood", "burst", "pipe", "água")):
         return "Active water"
     return "Hazard"
 
@@ -309,6 +329,8 @@ def route_service(text: str) -> tuple[str, float] | None:
     weights = _weights()
     vector = _vector(text)
     if weights is None or vector is None:
+        return None
+    if vector.shape[0] != weights["service_W"].shape[1]:
         return None
     probs = _softmax(weights["service_W"] @ vector + weights["service_b"])
     index = int(probs.argmax())

@@ -1,0 +1,154 @@
+{
+  "seed": 20261023,
+  "embedder": "intfloat/multilingual-e5-large",
+  "head": "logistic-e5",
+  "train_n": 773,
+  "val_n": 591,
+  "held_out_n": 148,
+  "thresholds": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.4
+  },
+  "validation": {
+    "n": 591,
+    "per_class": {
+      "emergency": {
+        "n": 520,
+        "hit": 512,
+        "recall": 0.985
+      },
+      "ask_safety": {
+        "n": 10,
+        "hit": 0,
+        "recall": 0.0
+      },
+      "routine": {
+        "n": 60,
+        "hit": 59,
+        "recall": 0.983
+      },
+      "other": {
+        "n": 1,
+        "hit": 0,
+        "recall": 0.0
+      }
+    },
+    "emergency_recall": 0.985,
+    "false_pages": 1,
+    "false_page_rate": 0.014,
+    "routine_to_ask": 0,
+    "routine_to_ask_rate": 0.0
+  },
+  "held_out_head_only": {
+    "n": 148,
+    "per_class": {
+      "emergency": {
+        "n": 114,
+        "hit": 105,
+        "recall": 0.921
+      },
+      "ask_safety": {
+        "n": 3,
+        "hit": 0,
+        "recall": 0.0
+      },
+      "routine": {
+        "n": 31,
+        "hit": 31,
+        "recall": 1.0
+      },
+      "other": {
+        "n": 0,
+        "hit": 0,
+        "recall": null
+      }
+    },
+    "emergency_recall": 0.921,
+    "false_pages": 0,
+    "false_page_rate": 0.0,
+    "routine_to_ask": 0,
+    "routine_to_ask_rate": 0.0
+  },
+  "held_out_by_family": {
+    "co": {
+      "n": 18,
+      "hit": 17,
+      "recall": 0.944
+    },
+    "comfort": {
+      "n": 18,
+      "hit": 17,
+      "recall": 0.944
+    },
+    "electrical": {
+      "n": 19,
+      "hit": 16,
+      "recall": 0.842
+    },
+    "flood": {
+      "n": 18,
+      "hit": 17,
+      "recall": 0.944
+    },
+    "gas": {
+      "n": 21,
+      "hit": 19,
+      "recall": 0.905
+    },
+    "sewage": {
+      "n": 10,
+      "hit": 9,
+      "recall": 0.9
+    },
+    "water_electric": {
+      "n": 10,
+      "hit": 10,
+      "recall": 1.0
+    }
+  },
+  "held_out_by_language": {
+    "ar": {
+      "n": 12,
+      "hit": 11,
+      "recall": 0.917
+    },
+    "en": {
+      "n": 30,
+      "hit": 29,
+      "recall": 0.967
+    },
+    "es": {
+      "n": 12,
+      "hit": 11,
+      "recall": 0.917
+    },
+    "hi": {
+      "n": 12,
+      "hit": 12,
+      "recall": 1.0
+    },
+    "pt": {
+      "n": 12,
+      "hit": 10,
+      "recall": 0.833
+    },
+    "roman": {
+      "n": 12,
+      "hit": 9,
+      "recall": 0.75
+    },
+    "tl": {
+      "n": 12,
+      "hit": 12,
+      "recall": 1.0
+    },
+    "ur": {
+      "n": 12,
+      "hit": 11,
+      "recall": 0.917
+    }
+  },
+  "note": "Head-only scores use the learned head before hand rules. The threshold was chosen on the synthetic validation split, then frozen. The held-out file was written before training and was excluded from the fit."
+}

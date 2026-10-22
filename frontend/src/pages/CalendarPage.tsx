@@ -174,12 +174,20 @@ export function CalendarPage() {
               })}
             </div>
             <div className="flex" aria-label="Schedule from 7:00 to 19:00">
-              <div className="sticky left-0 z-10 w-14 shrink-0 bg-card" style={{ height: GRID_HEIGHT }}>
+              <div className="sticky left-0 z-20 w-14 shrink-0 bg-card" style={{ height: GRID_HEIGHT }}>
                 {HOURS.map((slot) => (
                   <div key={slot.index} className="h-6 pr-2 text-right text-xs text-subtle">
                     {slot.label}
                   </div>
                 ))}
+                {showNow && (
+                  <div
+                    className="pointer-events-none absolute right-1 z-20 -translate-y-full pb-0.5 text-[10px] font-medium leading-none text-danger"
+                    style={{ top: nowMinutes * PX_PER_MIN }}
+                  >
+                    Now
+                  </div>
+                )}
               </div>
               {columns.map((key) => {
                 const items = active.filter((booking) => dayKey(booking.start) === key);
@@ -194,9 +202,6 @@ export function CalendarPage() {
                     ))}
                     {showNow && key === today && (
                       <div className="pointer-events-none absolute inset-x-0 z-20" style={{ top: nowMinutes * PX_PER_MIN }}>
-                        <div className="absolute -top-4 left-1 rounded-sm bg-card px-1 text-[10px] font-medium leading-4 text-danger">
-                          Now
-                        </div>
                         <div className="h-px bg-danger" />
                       </div>
                     )}

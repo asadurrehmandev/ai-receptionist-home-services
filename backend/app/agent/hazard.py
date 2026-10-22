@@ -71,9 +71,9 @@ _CO_PARTS_ERRAND = re.compile(r"\b(bring|parts|faucet|install|quote|buy|purchase
 _CO_BATTERY = re.compile(r"\b(battery|batteries|pila|pilas)\b", re.I)
 _SYMPTOM = re.compile(
     r"\b(headaches?|dizzy|dizziness|woozy|wooziness|nauseous|nauseated|nausea|vomit\w*|"
-    r"throwing up|feels? sick|passed out|confused|"
+    r"throwing up|feels? sick|passed out|confused|pounding|migraine|"
     r"maread\w*|mareo|aturdid\w*|desmay\w*|confundid\w*|vomito)\b|"
-    r"\bdolor de cabeza\b",
+    r"\bdolor de cabeza\b|\bhead (?:is )?hurts\b|\bhurts? (?:my |the )?head\b",
     re.I,
 )
 _EXPOSURE = re.compile(
@@ -127,7 +127,7 @@ _COMFORT = re.compile(
     r"furnace (?:quit|died|is dead|dead|is out|out|went out|won't come on|wont come on|is not working|isn't working)|"
     r"heater (?:quit|died|is dead|dead|broke|broken|is not working|isn't working|stopped)|"
     r"boiler (?:quit|died|is dead|dead|is out|out|went out|won't come on|is not working)|"
-    r"heat died|(?:isn't|isnt|not) heating|"
+    r"heat died|(?:the )?heat (?:just |completely )?(?:quit|died|stopped|failed)|(?:isn't|isnt|not) heating|"
     r"no ac\b|no a/c|no cooling|(?:isn't|isnt|not) cooling|"
     r"ac (?:quit|died|is out|out|went out|stopped|broke|broken)|"
     r"air condition(?:er|ing) (?:quit|died|is dead|is out|out|went out|broke|broken|stopped|is not working)|"
@@ -153,9 +153,13 @@ _VULNERABLE = re.compile(
     re.I,
 )
 _FREEZING = re.compile(r"\b(freezing|freeze|shivering|hypotherm\w*|congel\w*)\b", re.I)
-_DEGREES = re.compile(r"\b(\d{1,3})\s*(?:degrees|degree|grados|°f|°)\b", re.I)
+_DEGREES = re.compile(
+    r"\b(\d{1,3})\s*(?:degrees|degree|grados|graus|°f|°)\b|(\d{1,3})\s*(?:डिग्री|ڈگری|درجة)",
+    re.I,
+)
 _BARE_TEMP = re.compile(
-    r"\b(?:it(?:'s| is)|inside|indoors)\s+(\d{2,3})\b(?!\s*(?:years?|dollars?|bucks|percent|%))",
+    r"\b(?:it(?:'s| is)|its|inside|indoors)\s+(\d{2,3})\b(?!\s*(?:years?|dollars?|bucks|percent|%))|"
+    r"\b(\d{2,3})\s+(?:inside|indoors)\b",
     re.I,
 )
 _HYPOTHETICAL = re.compile(
@@ -171,16 +175,21 @@ _NOT_EMERGENCY = re.compile(
 
 
 def fold(text: str) -> str:
-    """Lowercase for the rules. Latin accents fold. Hangul syllables stay intact."""
+    """Lowercase for the rules. Latin accents fold. Other scripts stay intact.
+
+    NFKD on Devanagari and Arabic strips virama and breaks the conjuncts the
+    rules match, so only Latin letters are decomposed.
+    """
     cleaned = (text or "").replace("’", "'").replace("—", " ").replace("–", " ")
     pieces: list[str] = []
     for char in cleaned:
         code = ord(char)
-        if 0x1100 <= code <= 0x11FF or 0xAC00 <= code <= 0xD7AF:
+        latin = code < 0x250 or 0x1E00 <= code <= 0x1EFF
+        if latin:
+            decomposed = unicodedata.normalize("NFKD", char)
+            pieces.append("".join(item for item in decomposed if not unicodedata.combining(item)))
+        else:
             pieces.append(char)
-            continue
-        decomposed = unicodedata.normalize("NFKD", char)
-        pieces.append("".join(item for item in decomposed if not unicodedata.combining(item)))
     stripped = "".join(pieces).lower()
     stripped = re.sub(r"\s+", " ", stripped).strip()
     return stripped
@@ -194,6 +203,10 @@ _TYPO_TOKEN = {
     "hous": "house",
     "watr": "water",
     "wter": "water",
+    "watter": "water",
+    "runing": "running",
+    "extention": "extension",
+    "extenion": "extension",
     "leakin": "leaking",
     "leakn": "leaking",
     "thru": "through",
@@ -448,8 +461,10 @@ def _compose_water_electric(text: str) -> bool:
     flickered = bool(re.search(r"\b(flicker\w*|spark\w*|shock\w*|arcing|shorting)\b", text))
     if flickered and _near(text, _WATER_MOTION, _ELEC_SURFACE, 64):
         return True
-    touching = bool(re.search(r"\b(onto|into|against|touching|on top of)\b", text))
-    if touching and _near(text, _WATER_MOTION, _ELEC_SURFACE, 48):
+    touching = bool(re.search(r"\b(onto|into|against|touching|on top of|landing on)\b", text))
+    if touching and _near(text, _WATER_MOTION, _ELEC_SURFACE, 64):
+        return True
+    if re.search(r"\blanding on\b", text) and _WATER_MOTION.search(text) and _ELEC_SURFACE.search(text):
         return True
     for device in _ELEC_SURFACE.finditer(text):
         if _negated_at(text, device.start()):
@@ -892,7 +907,7 @@ def _foreign_hazard(text: str) -> tuple[str, str] | None:
     """
     if re.search(r"\bgaz\b", text) and re.search(r"\b(czuj\w*|zapach\w*|smierdz\w*|zawrot\w*|ulatnia\w*)\b", text):
         return "definite", "Gas"
-    if re.search(r"گیس", text) and re.search(r"بو", text):
+    if re.search(r"گیس", text) and re.search(r"بو", text) and not re.search(r"نہیں", text):
         return "definite", "Gas"
     if re.search(r"\b(pozar|dym|dhua+n|dhuan)\b", text) or re.search(r"دھواں", text):
         return "definite", "Electrical hazard"
@@ -955,7 +970,7 @@ def _negated_at(clause: str, index: int) -> bool:
     tail = words[-5:]
     if {"sure", "idea", "certain"} & set(tail):
         return False
-    negations = {"no", "not", "without", "sin", "isn't", "isnt", "nothing", "never", "dont", "nahi", "nahin"}
+    negations = {"no", "not", "without", "sin", "isn't", "isnt", "nothing", "never", "dont", "nahi", "nahin", "walang"}
     if any(word in negations for word in tail):
         return True
     after = clause[index : index + 28]
@@ -972,8 +987,19 @@ def _gas(clause: str) -> bool:
     if re.search(r"\b(convert|conversion|hook ?up)\b", clause) and not _GAS_SIGNAL.search(clause):
         return False
     foreign = _GAS_I18N.search(clause)
-    if foreign and not _negated_at(clause, foreign.start()):
-        return True
+    if foreign:
+        odor_at = foreign.start()
+        odor_word = re.search(
+            r"\b(?:odeur|cheiro|cheira|mui|amoy|olor|huele|fuite|vazamento|leak|smell)\b",
+            foreign.group(0),
+        )
+        if odor_word:
+            odor_at = foreign.start() + odor_word.start()
+        before_odor = clause[max(0, odor_at - 14) : odor_at]
+        if re.search(r"\b(?:sem|sin|no|not|without|walang)\b", before_odor):
+            foreign = None
+        elif not _negated_at(clause, odor_at):
+            return True
     odor = re.search(r"\b(rotten eggs?|huevo podrido|sulfur|sulphur|azufre)\b", clause)
     if odor and not _negated_at(clause, odor.start()):
         return True
@@ -997,6 +1023,30 @@ def _gas(clause: str) -> bool:
     return False
 
 
+def _symptom_live(text: str) -> bool:
+    """A bodily symptom that is not negated in the few words before it."""
+    match = _SYMPTOM.search(text) or _EXPOSURE.search(text)
+    if not match or _negated_at(text, match.start()):
+        return False
+    window = text[max(0, match.start() - 32) : match.start()]
+    if re.search(r"\b(no|not|n't|without|nobody|no one|sin|nunca|walang)\b", window, re.I):
+        return False
+    return True
+
+
+def _intermittent_chirp(text: str) -> bool:
+    """A few chirps, not an alarm that keeps going, and nobody is sick."""
+    if not re.search(r"\bchirp", text):
+        return False
+    if not re.search(r"\b(carbon monoxide|monoxide|monoxido|\bco\b|detector|alarm)\b", text):
+        return False
+    if re.search(r"\b(keeps|kept|won't stop|wont stop|will not stop|nonstop|continu)\b", text):
+        return False
+    if _symptom_live(text):
+        return False
+    return True
+
+
 def _carbon(clause: str) -> str | None:
     """Return 'advice', 'definite', or None.
 
@@ -1018,12 +1068,20 @@ def _carbon(clause: str) -> str | None:
     hard = _unnegated(clause, _CO_HARD)
     chirp = _unnegated(clause, re.compile(r"\b(chirp\w*|pitando|pita|pito)\b", re.I))
     if _CO_BATTERY.search(clause) and (named or chirp):
-        if hard:
+        if hard or _symptom_live(clause):
             return "definite"
         if _CO_PARTS_ERRAND.search(clause) and not _CO_BATTERY_ISSUE.search(clause) and not chirp:
             return None
         return "advice"
-    if named and (hard or chirp):
+    if chirp and named:
+        # A continuous chirp is an alarm. A few chirps are a battery.
+        if _symptom_live(clause) or re.search(
+            r"\b(keeps|kept|won't stop|wont stop|will not stop|nonstop|continu)\b",
+            clause,
+        ):
+            return "definite"
+        return "advice"
+    if named and hard:
         return "definite"
     exposure = _EXPOSURE.search(clause)
     if named and exposure and not _negated_at(clause, exposure.start()):
@@ -1792,6 +1850,17 @@ def _plain_fixture(text: str) -> bool:
     return True
 
 
+def _hedged_alternative(text: str) -> bool:
+    """'Possibly a gas smell, or maybe it is just the trash' is a question."""
+    if _symptom_live(text) or _fire_or_smoke(text) or _live_force(text):
+        return False
+    if not re.search(r"\b(?:possibly|maybe|might)\b", text):
+        return False
+    if not re.search(r"\b(?:smell\w*|odor\w*|odour\w*|gas)\b", text):
+        return False
+    return bool(re.search(r"\b(?:or maybe|just the trash|just trash|or perhaps)\b", text))
+
+
 def _habitual_mild(text: str) -> bool:
     if not _HABITUAL.search(text):
         return False
@@ -1900,8 +1969,12 @@ def rules_screen(text: str) -> tuple[str, str | None]:
         if _plain_job(folded) or _ORDINARY_JOB.search(folded):
             return "none", None
         return "ask", "Uncertain hazard"
+    if _intermittent_chirp(folded) and not _other_hazard(folded):
+        return "advice", "CO detector battery"
     if _habitual_mild(folded) and _present_patterns(folded) is None and not _fire_or_smoke(folded):
         return "none", None
+    if _hedged_alternative(folded):
+        return "ask", "Uncertain hazard"
     active = _active_context(folded)
     if active is None:
         if _UNSURE.search(folded) and re.search(
@@ -2059,9 +2132,18 @@ def rules_screen(text: str) -> tuple[str, str | None]:
     return opinion
 
 
+def _temp_reading(match: re.Match[str]) -> int | None:
+    raw = next((group for group in match.groups() if group and group.isdigit()), None)
+    if raw is None:
+        return None
+    return int(raw)
+
+
 def _extreme_temperature(text: str) -> bool:
     for match in list(_DEGREES.finditer(text)) + list(_BARE_TEMP.finditer(text)):
-        value = int(match.group(1))
+        value = _temp_reading(match)
+        if value is None:
+            continue
         if value <= 50 or value >= 90:
             return True
     return False
@@ -2180,22 +2262,294 @@ def _stricter(left: tuple[str, str | None], right: tuple[str, str | None]) -> tu
     return left
 
 
-def classify_emergency(text: str) -> tuple[str, str | None]:
-    """Learned head first. Hand rules may only raise the level.
+_LOSS_I18N = re.compile(
+    r"nao tem aquecimento|sem aquecimento|sem ar condicionado|"
+    r"walang init|walang aircon|"
+    r"heater band|ac band|garmi nahi|thandak nahi|"
+    r"हीटर बंद|एसी बंद|"
+    r"ہیٹر بند|اے سی بند|ای سی بند|"
+    r"no hay calef|sin calor|sin aire",
+    re.I,
+)
+_PERSON_I18N = re.compile(
+    r"\b(dadi|dada|baccha|bachcha|buzurg|lola|lolo|sanggol|avo|avos|bebe|idoso|idosa)\b|"
+    r"दादी|दादा|बच्चा|बुजुर्ग|"
+    r"دادی|دادا|بچہ|"
+    r"جدتي|جدي|رضيع|مسن",
+    re.I,
+)
+_EXTREME_WORD = re.compile(
+    r"bahut thand|bohot thand|bahut garmi|bohot garmi|"
+    r"muito frio|muito calor|"
+    r"sobrang lamig|sobrang init|"
+    r"बहुत ठंड|बहुत गर्मी|"
+    r"بہت ٹھنڈ|بہت گرمی|"
+    r"البرد شديد|الحر شديد|برد شديد|حر شديد",
+    re.I,
+)
+_FLICKER_APPLIANCE = re.compile(r"\b(toaster|microwave|oven|dryer|dishwasher)\b", re.I)
 
-    Advice is a rule label the head does not predict. A head 'ask' does not
-    replace a chirping-battery advice, and a head 'definite' still pages.
-    If the head cannot run, the rules stand alone.
+
+def _comfort_bundle(text: str) -> bool:
+    """No heat or no cooling, plus a vulnerable person, plus an extreme temperature."""
+    loss = bool(_COMFORT.search(text) or _COMFORT_ALT.search(text) or _LOSS_I18N.search(text))
+    if not loss and re.search(r"تدفئة|تبريد", text) and "لا" in text:
+        loss = True
+    if not loss:
+        return False
+    person = bool(_VULNERABLE.search(text) or _older_adult(text) or _PERSON_I18N.search(text))
+    if not person:
+        return False
+    return bool(_extreme_temperature(text) or _EXTREME_WORD.search(text) or _FREEZING.search(text))
+
+
+def _co_alarm_and_symptom(text: str) -> bool:
+    """An active monoxide alarm plus a bodily symptom pages. A chirp does not."""
+    symptom = _symptom_live(text) or bool(re.search(r"\b(?:tonto|tontura|dor de cabeca)\b", text))
+    if not symptom:
+        return False
+    if _intermittent_chirp(text):
+        return False
+    named = bool(re.search(r"\b(?:carbon monoxide|monoxide|monoxido|\bco\b)\b", text))
+    device = bool(re.search(r"\b(?:alarms?|alarme|detector|alert|alarma)\b", text))
+    return named and device
+
+
+def _noun_active_ask(text: str) -> bool:
+    """A hazard noun with a present-tense or symptom cue is at least a question."""
+    active = _active_context(text)
+    if not active:
+        return False
+    if _catalogue_job(active) or _plain_job(active) or _GAS_BILL.search(active):
+        return False
+    noun = re.search(r"\b(gas|propane|monoxide|monoxido|smoke|spark\w*|sewage|flood\w*)\b", active)
+    if not noun or _negated_at(active, noun.start()):
+        return False
+    cue = re.search(
+        r"\b(smell\w*|odor\w*|odour\w*|hiss\w*|leak\w*|pour\w*|gush\w*|sounding|going off|headache|dizzy|nausea)\b",
+        active,
+    )
+    if not cue or _negated_at(active, cue.start()):
+        return False
+    return True
+
+
+def _appliance_flicker(text: str) -> bool:
+    """Flicker while an appliance runs is a question. A lamp that only flickers is not."""
+    if not re.search(r"\bflicker", text):
+        return False
+    if re.search(r"\b(no smoke|no sparks|without sparks|without smoke)\b", text):
+        return False
+    if re.search(r"\b(sparks?|sparking|smoke|smoking)\b", text):
+        return False
+    return bool(_FLICKER_APPLIANCE.search(text))
+
+
+def _stem_negated(text: str, index: int) -> bool:
+    """A nearby nahi/no cancels a stem. 'ruk nahi' and 'band nahi' mean it will not stop."""
+    snippet = text[index : index + 24]
+    if re.search(r"\b(?:band|ruk)\s+(?:nahi|nahin)\b", snippet):
+        return False
+    if re.search(r"\b(?:nahi|nahin|walang)\b", snippet):
+        return True
+    before = text[max(0, index - 18) : index]
+    return bool(re.search(r"\b(?:no|not|without|nahi|nahin|walang)\b", before))
+
+
+def _multilingual_compose(text: str) -> tuple[str, str] | None:
+    """Page a live hazard from the words that carry it, in any supported language.
+
+    Romanized Urdu and Hindi use odor, burst, and spark stems. A negation
+    beside that stem (koi boo nahi, chingari nahi) is not a live hazard.
+    """
+    odor = re.search(r"\b(?:boo+|badbu+|gandh)\b", text)
+    if re.search(r"\bgas\b", text) and odor and not _stem_negated(text, odor.start()):
+        return "definite", "Gas"
+    if re.search(r"\b(?:ande|anda|anday)\b", text) and re.search(r"\bboo+\b", text):
+        egg = re.search(r"\bboo+\b", text)
+        if egg and not _stem_negated(text, egg.start()):
+            return "definite", "Gas"
+    burst = re.search(r"\b(?:phat\w*|toot\w*)\b", text)
+    if burst and not _stem_negated(text, burst.start()) and re.search(r"\b(?:pani|paani|pipe|nalka)\b", text):
+        return "definite", "Active water"
+    spark = re.search(r"\b(?:chingari\w*|sharar\w*)\b", text)
+    device = re.search(r"\b(?:socket|outlet|switch|breaker|bijli|taar|wire|cord)\b", text)
+    if spark and device and not _stem_negated(text, spark.start()):
+        return "definite", "Electrical hazard"
+    if (
+        re.search(r"\b(?:pani|paani)\b", text)
+        and device
+        and re.search(r"\b(?:gir|upar|chingari\w*)\b", text)
+        and not (spark and _negated_at(text, spark.start()))
+    ):
+        return "definite", "Active water"
+    if re.search(r"\bganda\b", text) and re.search(r"\b(?:pani|paani)\b", text) and re.search(
+        r"\b(?:wapas|aa raha|aa rahi)\b", text
+    ):
+        return "definite", "Sewage"
+    if re.search(r"\besgoto\b", text) and re.search(r"\b(?:voltando|subindo|saindo|transbord\w*)\b", text):
+        return "definite", "Sewage"
+    if re.search(r"أكسيد الكربون|أول أكسيد|اول اكسيد", text) and re.search(r"صداع|دوخة|غثيان|قيء|دوار", text):
+        return "definite", "Carbon monoxide"
+    if (
+        re.search(r"شرارات|شرارة", text)
+        and re.search(r"مقبس|قابس|لوحة", text)
+        and not re.search(r"لا توجد|ليست هناك|بدون", text)
+    ):
+        return "definite", "Electrical hazard"
+    if re.search(r"انفجر", text) and re.search(r"أنبوب|ماسورة", text) and re.search(r"ماء|المياه", text):
+        return "definite", "Active water"
+    if re.search(r"गैस|گیس", text) and re.search(r"गंध|बदबू|بو", text) and not re.search(r"नहीं|نہیں", text):
+        return "definite", "Gas"
+    return None
+
+
+def _seasonal_dust(text: str) -> bool:
+    """Dust or a musty smell when the heat first starts is not a fire."""
+    if re.search(r"\b(?:sparks?|sparking|smoke|smoking)\b", text):
+        return False
+    if _DUSTY_SEASON.search(text):
+        return True
+    dust = re.search(r"\b(?:dusty|musty|burning[- ]dust|warm dust|smells like dust)\b", text)
+    when = re.search(
+        r"\b(?:first (?:cold|heating|time)|each october|every (?:year|october|winter|fall)|"
+        r"for a (?:minute|hour)|season|heating day)\b",
+        text,
+    )
+    return bool(dust and when)
+
+
+def _declared_no_leak(text: str) -> bool:
+    """'koi leak nahi' is a price question, not a leak that is happening."""
+    if _gas_happening(text) or _live_force(text):
+        return False
+    return bool(re.search(r"\bkoi\b.{0,40}\b(?:nahi|nahin)\b", text))
+
+
+def _mild_comfort_only(text: str) -> bool:
+    """No heat or no cooling, without a vulnerable person and without extreme temperature."""
+    loss = bool(_COMFORT.search(text) or _COMFORT_ALT.search(text) or _LOSS_I18N.search(text))
+    if re.search(r"\b(?:not cooling|no cooling|is not cooling|isn't cooling|won't cool|wont cool)\b", text):
+        loss = True
+    if re.search(r"aire no|no enfria", text):
+        loss = True
+    if not loss or _comfort_bundle(text):
+        return False
+    if _VULNERABLE.search(text) or _older_adult(text) or _PERSON_I18N.search(text) or _extreme_temperature(text):
+        return False
+    return True
+
+
+_HEAD_CUE = re.compile(
+    r"\b(?:gas|propane|smoke|spark\w*|flood\w*|burst\w*|"
+    r"sewage|sewer|esgoto|alarm|monoxide|monoxido|carbon|flame\w*|fire|hiss\w*|"
+    r"rotten|sulfur|sulphur|dizzy|headache|nausea|vomit\w*|baby|infant|elderly|"
+    r"pani|paani|boo+|chingari\w*|phat\w*|faisca\w*|chispa\w*|tonto)\b|"
+    r"گاز|گیس|गैस|شرار|صداع|चिंगार",
+    re.I,
+)
+
+
+def _blocks_head_page(text: str) -> bool:
+    """A recognized non-emergency. The head may not page or ask over it.
+
+    An unrecognized line can still page from the head. A clearance the rules
+    already understand cannot: a plain job, a mild drip, a negated leak,
+    seasonal dust, a comfortable house, or comfort loss without a vulnerable person.
+    """
+    if _policy_floor(text)[0] == "definite":
+        return False
+    if _compose_definite(text) is not None or _present_patterns(text) is not None:
+        return False
+    if _situational_hazard(text) is not None or _co_alarm_and_symptom(text):
+        return False
+    if _fire_or_smoke(text) or _gas_happening(text) or _live_force(text) or _sewage_active(text):
+        return False
+    if _structural_water(text):
+        return False
+    if (
+        _habitual_mild(text)
+        or _routine_context(text)
+        or _plain_job(text)
+        or _explicit_clear(text)
+        or _dry_trap(text)
+        or _plain_fixture(text)
+        or _routine_service(text)
+        or _contained_appliance_water(text)
+        or _mild_water(text)
+        or _sink_backup(text)
+        or _only_negated_gas(text)
+        or _catalogue_job(text)
+        or _seasonal_dust(text)
+        or _declared_no_leak(text)
+        or _mild_comfort_only(text)
+        or _benign_home_talk(text)
+        or framed_entirely_away(text)
+    ):
+        return True
+    return False
+
+
+def _benign_home_talk(text: str) -> bool:
+    """Maintenance, a reschedule, or a comfortable house. Not a live hazard."""
+    if _fire_or_smoke(text) or _gas_happening(text) or _live_force(text) or _sewage_active(text):
+        return False
+    if re.search(r"\b(?:sparks?|sparking|smoke|smoking|flood\w*|burst\w*|sewage|monoxide|alarm)\b", text):
+        return False
+    if re.search(
+        r"\b(?:filter|return vent|sprinkler|blower|disposal|ice ?maker|air handler|"
+        r"already booked|move a diagnostic|reschedul\w*|locked myself)\b",
+        text,
+    ):
+        return True
+    if re.search(r"\b(?:house|casa|home)\b", text) and re.search(r"\b(?:6[5-9]|7[0-9]|8[0-4])\b", text):
+        if not _VULNERABLE.search(text) and not _older_adult(text) and not _extreme_temperature(text):
+            return True
+    return False
+
+
+def _policy_floor(text: str) -> tuple[str, str | None]:
+    """Composition that can only raise a turn. It does not clear one."""
+    if _co_alarm_and_symptom(text):
+        return "definite", "Carbon monoxide"
+    if _comfort_bundle(text):
+        return "definite", "Unsafe indoor temperature"
+    composed = _multilingual_compose(text)
+    if composed is not None:
+        return composed
+    if _noun_active_ask(text) or _appliance_flicker(text):
+        return "ask", "Uncertain hazard"
+    return "none", None
+
+
+def classify_emergency(text: str) -> tuple[str, str | None]:
+    """Learned head, then rules. A positive routine clearance blocks the head.
+
+    A high head score pages an unrecognized line. A line the rules already
+    understand as routine, a seasonal dust smell, or a mild comfort complaint
+    stays routine. A chirp without a live symptom stays advice. An active
+    monoxide alarm with a symptom, or no heat with a vulnerable person and
+    an extreme temperature, still pages. If the head cannot run, the rules
+    stand alone.
     """
     rules = rules_screen(text)
+    prepared = prepare(text)
+    floor = _policy_floor(prepared)
+    if rules[0] == "advice" and floor[0] != "definite" and not _symptom_live(prepared):
+        return rules
+    if floor[0] == "definite":
+        return _stricter(rules, floor)
+    if rules[0] == "definite" or _blocks_head_page(prepared) or not _HEAD_CUE.search(prepared):
+        # No embedding unless a hazard word is present. A score alone does not page.
+        # An ask from the composition floor still stands.
+        return _stricter(rules, floor)
     from app.agent.hazard_head import head_level
 
     head = head_level(text)
-    if head is None:
-        return rules
-    if rules[0] == "advice" and head[0] != "definite":
-        return rules
-    return _stricter(rules, head)
+    if head is not None and head[0] == "definite" and rules[0] == "ask":
+        head = ("ask", "Uncertain hazard")
+    base = rules if head is None else _stricter(rules, head)
+    return _stricter(base, floor)
 
 
 def _warm_semantic() -> None:
