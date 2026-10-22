@@ -94,7 +94,10 @@ class MediaBridge:
         self.heard_speech = False
         if self.transcribe is None or not audio:
             return []
-        transcript = self.transcribe(audio)
+        try:
+            transcript = self.transcribe(audio)
+        except Exception:
+            return [self._mark("stt-failed")]
         if not transcript:
             return [self._mark("empty-transcript")]
         return self.apply_transcript(transcript)
@@ -113,7 +116,20 @@ class MediaBridge:
             frames.append(self._mark("tts-unconfigured"))
             frames.append(self._mark("reply"))
             return frames
-        audio = self.synthesize(text)
+        try:
+            audio = self.synthesize(text)
+        except Exception:
+            frames.append(self._mark("tts-failed"))
+            if self.updater and self.call_sid:
+                from app.voice.twilio import say_and_hangup
+
+                try:
+                    self.updater(self.call_sid, say_and_hangup(text, "Polly.Joanna"))
+                except Exception:
+                    frames.append(self._mark("say-fallback"))
+            else:
+                frames.append(self._mark("say-fallback"))
+            return frames
         frames.append({"event": "clear", "streamSid": self.stream_sid})
         for offset in range(0, len(audio), 160):
             chunk = audio[offset : offset + 160]

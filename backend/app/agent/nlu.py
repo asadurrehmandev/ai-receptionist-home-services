@@ -218,6 +218,39 @@ def looks_spanish(text: str) -> bool:
     return len(hits) >= 2 or "hola" in hits or "huele" in hits
 
 
+_OTHER_SCRIPT = re.compile(r"[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0600-\u06FF]")
+_OTHER_WORDS = (
+    "odeur",
+    "gaz",
+    "rieche",
+    "wasser",
+    "keller",
+    "cheiro",
+    "inond",
+    "mùi",
+    "ngập",
+    "zapach",
+    "pachnie",
+    "überschwemmt",
+    "steckdose",
+    "odeur",
+)
+
+
+def detect_language(text: str) -> str:
+    """Return en, es, or other. Booking is English only."""
+    if looks_spanish(text):
+        return "es"
+    if _OTHER_SCRIPT.search(text or ""):
+        return "other"
+    norm = normalize(text)
+    if any(re.search(rf"\b{re.escape(word)}\b", norm) for word in _OTHER_WORDS if word.isascii()):
+        return "other"
+    if any(word in (text or "").lower() for word in _OTHER_WORDS if not word.isascii()):
+        return "other"
+    return "en"
+
+
 def is_haggle(text: str) -> bool:
     return bool(
         re.search(
@@ -262,9 +295,11 @@ def is_yes(text: str) -> bool:
 
 
 def is_clean_yes(text: str) -> bool:
-    """A cancel confirmation. Questions, hedges, and a new time do not count."""
+    """A confirmation. Questions, hedges, and a new time do not count."""
     raw = text or ""
     if CLEAN_YES_BLOCK.search(raw):
+        return False
+    if re.search(r"\b(let me check|check with|not sure|i'll think|ill think|maybe later)\b", raw, re.I):
         return False
     if re.search(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|noon|\d{1,2}\s*(?:am|pm))\b", raw, re.I):
         return False
@@ -295,7 +330,13 @@ def _digits(phone: str) -> str:
 
 
 def expand_spoken_numbers(text: str) -> str:
-    """Turn 'five one two' and 'double five' into digits. Leaves other words alone."""
+    """Turn 'five one two', 'five-one-two', and 'double five' into digits."""
+    text = re.sub(
+        r"\b((?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine)(?:-(?:zero|oh|o|one|two|three|four|five|six|seven|eight|nine))+)\b",
+        lambda match: match.group(1).replace("-", " "),
+        text or "",
+        flags=re.I,
+    )
 
     def convert(match: re.Match[str]) -> str:
         words = match.group(0).split()
@@ -391,15 +432,17 @@ def extract_unit(text: str) -> str | None:
 
 
 def last4_correction(text: str) -> str | None:
-    """A spoken fix for the last four digits, such as '0178 at the end'."""
+    """A spoken fix for the last four digits, such as 'ends in 0178' or '0178 at the end'."""
     match = re.search(
-        r"\b(\d{4})\b\s+at the end\b|\bat the end\b(?:\s+(?:is|should be))?\s*(\d{4})\b",
+        r"\bends in\s+(\d{4})\b|"
+        r"\b(\d{4})\b\s+at the end\b|"
+        r"\bat the end\b(?:\s+(?:is|should be))?\s*(\d{4})\b",
         text or "",
         re.I,
     )
     if not match:
         return None
-    return match.group(1) or match.group(2)
+    return next(group for group in match.groups() if group)
 
 
 def house_correction(text: str) -> tuple[str, str] | None:

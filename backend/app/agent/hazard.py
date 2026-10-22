@@ -98,8 +98,9 @@ _COMFORT = re.compile(
     r"\b(no heat|without heat|lost (?:the )?heat|"
     r"heat(?:'s| is| went| has gone| is gone)? out|"
     r"heat(?:'s| is)? not working|heater (?:won't|wont|will not) (?:come|turn) on|"
-    r"furnace (?:quit|died|is dead|is out|out|went out|won't come on|wont come on|is not working|isn't working)|"
-    r"heater (?:quit|died|is dead|broke|broken|is not working|isn't working|stopped)|"
+    r"furnace (?:quit|died|is dead|dead|is out|out|went out|won't come on|wont come on|is not working|isn't working)|"
+    r"heater (?:quit|died|is dead|dead|broke|broken|is not working|isn't working|stopped)|"
+    r"boiler (?:quit|died|is dead|dead|is out|out|went out|won't come on|is not working)|"
     r"heat died|(?:isn't|isnt|not) heating|"
     r"no ac\b|no a/c|no cooling|(?:isn't|isnt|not) cooling|"
     r"ac (?:quit|died|is out|out|went out|stopped|broke|broken)|"
@@ -127,6 +128,14 @@ _VULNERABLE = re.compile(
 )
 _FREEZING = re.compile(r"\b(freezing|freeze|shivering|hypotherm\w*|congel\w*)\b", re.I)
 _DEGREES = re.compile(r"\b(\d{1,3})\s*(?:degrees|degree|grados|°f|°)\b", re.I)
+_BARE_TEMP = re.compile(
+    r"\b(?:it(?:'s| is)|inside|indoors)\s+(\d{2,3})\b(?!\s*(?:years?|dollars?|bucks|percent|%))",
+    re.I,
+)
+_HYPOTHETICAL = re.compile(
+    r"\b(just asking|hypothetically|hypothetical|what if|how fast|how soon)\b",
+    re.I,
+)
 _EMERGENCY_WORD = re.compile(r"\bemergenc(?:y|ia)\b", re.I)
 _NOT_EMERGENCY = re.compile(
     r"\b(not an emergency|no emergency|isn't an emergency|isnt an emergency|"
@@ -136,10 +145,17 @@ _NOT_EMERGENCY = re.compile(
 
 
 def fold(text: str) -> str:
+    """Lowercase for the rules. Latin accents fold. Hangul syllables stay intact."""
     cleaned = (text or "").replace("’", "'").replace("—", " ").replace("–", " ")
-    decomposed = unicodedata.normalize("NFKD", cleaned)
-    stripped = "".join(char for char in decomposed if not unicodedata.combining(char))
-    stripped = stripped.lower()
+    pieces: list[str] = []
+    for char in cleaned:
+        code = ord(char)
+        if 0x1100 <= code <= 0x11FF or 0xAC00 <= code <= 0xD7AF:
+            pieces.append(char)
+            continue
+        decomposed = unicodedata.normalize("NFKD", char)
+        pieces.append("".join(item for item in decomposed if not unicodedata.combining(item)))
+    stripped = "".join(pieces).lower()
     stripped = re.sub(r"\s+", " ", stripped).strip()
     return stripped
 
@@ -301,7 +317,7 @@ def _older_adult(clause: str) -> bool:
 
 _COMFORT_ALT = re.compile(
     r"\b(heater|furnace|heat|heating|ac|a/c|air|cooling)\b.{0,36}"
-    r"\b(not working|stopped|broke|broken|won't come on|wont come on|will not come on|"
+    r"\b(not working|stopped|broke|broken|dead|won't come on|wont come on|will not come on|"
     r"won't turn on|wont turn on|will not turn on|isn't heating|isnt heating|isn't cooling|isnt cooling)\b",
     re.I,
 )
@@ -313,10 +329,8 @@ def _comfort(clause: str, full: str | None = None) -> bool:
     blob = full or clause
     if _VULNERABLE.search(blob) or _FREEZING.search(blob) or _older_adult(blob):
         return True
-    for match in _DEGREES.finditer(blob):
-        value = int(match.group(1))
-        if value <= 50 or value >= 90:
-            return True
+    if _extreme_temperature(blob):
+        return True
     for match in _OVER_UNDER.finditer(blob):
         value = int(match.group(1))
         if match.group(0).lower().startswith(("over", "above")) and value >= 90:
@@ -327,9 +341,13 @@ def _comfort(clause: str, full: str | None = None) -> bool:
 
 
 def _emergency_word(clause: str) -> bool:
+    if _HYPOTHETICAL.search(clause) and not _GAS_SIGNAL.search(clause) and not _WATER_FORCE.search(clause):
+        return False
     if _NOT_EMERGENCY.search(clause):
         return False
     if re.search(r"\b(fee|charge|how much|price|cost|do you do)\b", clause):
+        return False
+    if re.search(r"\bemergency\s+(?:fund|savings|contact|contacts|kit)\b", clause):
         return False
     if re.search(r"\bonly emergency\b", clause):
         return False
@@ -374,24 +392,43 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         ruled = ("definite", "Hazard signals")
     else:
         ruled = ("none", None)
+    if ruled[0] == "advice":
+        return ruled
     if ruled[0] != "definite" and _routine_context(folded):
         return "none", None
-    from app.agent.hazard_embed import embed_hazard
+    from app.agent.hazard_semantic import semantic_hazard
 
-    guessed = embed_hazard(folded)
+    guessed = semantic_hazard(text)
     if guessed[1] == "Unsafe indoor temperature" and not _comfort_context(folded):
         guessed = ("none", None)
+    if guessed[1] == "Active water" and _mild_water(folded):
+        guessed = ("none", None)
     return _stricter(ruled, guessed)
+
+
+def _extreme_temperature(text: str) -> bool:
+    for match in list(_DEGREES.finditer(text)) + list(_BARE_TEMP.finditer(text)):
+        value = int(match.group(1))
+        if value <= 50 or value >= 90:
+            return True
+    return False
+
+
+def _mild_water(text: str) -> bool:
+    """A drip is not a flood. Semantic water cannot promote it."""
+    if _WATER_FORCE.search(text) or _sewage_active(text) or _WATER_PATH.search(text):
+        return False
+    if re.search(r"\b(drip\w*|leak\w*|weeping|seeping|gote\w*|goutte\w*|tropft|pingando)\b", text):
+        return True
+    return False
 
 
 def _comfort_context(text: str) -> bool:
     """No heat or no cooling is urgent only with a vulnerable person or an extreme temperature."""
     if _VULNERABLE.search(text) or _FREEZING.search(text) or _older_adult(text):
         return True
-    for match in _DEGREES.finditer(text):
-        value = int(match.group(1))
-        if value <= 50 or value >= 90:
-            return True
+    if _extreme_temperature(text):
+        return True
     for match in _OVER_UNDER.finditer(text):
         value = int(match.group(1))
         if match.group(0).lower().startswith(("over", "above")) and value >= 90:
@@ -414,6 +451,14 @@ def _battery_advice(text: str) -> bool:
 def _routine_context(text: str) -> bool:
     """Fee questions, appliance conversions, and a car with no fuel are not pages."""
     if _HISTORICAL.search(text) and not _STRONG_NOW.search(text):
+        return True
+    if _HYPOTHETICAL.search(text) and not _GAS_SIGNAL.search(text) and not _WATER_FORCE.search(text) and not _ELECTRICAL.search(text):
+        return True
+    if _sink_backup(text):
+        return True
+    if _only_negated_gas(text):
+        return True
+    if _COOKING.search(text) and not re.search(r"\b(outlet|panel|breaker|wire)\b", text) and not _GAS_SIGNAL.search(text):
         return True
     if re.search(r"\b(car|vehicle|truck|gas station|out of gas|ran out of gas)\b", text) and not _GAS_SIGNAL.search(text):
         return True
@@ -439,6 +484,24 @@ def _routine_context(text: str) -> bool:
     return False
 
 
+def _only_negated_gas(text: str) -> bool:
+    """'No gas smell' is not a leak. A separate real hazard still stands."""
+    if not re.search(r"\b(gas|smell|odor|odour)\b", text):
+        return False
+    if any(_gas(clause) for clause in _clauses(text) if not _skip_clause(clause)):
+        return False
+    if _ELECTRICAL.search(text) or _WATER_FORCE.search(text) or _CO_HARD.search(text):
+        return False
+    return bool(_NEGATED.search(text))
+
+
+def _sink_backup(text: str) -> bool:
+    """A sink or tub that backs up, without sewage or a burst, is a clog."""
+    if _WATER_FORCE.search(text) or _sewage_active(text):
+        return False
+    return bool(re.search(r"\b(sink|tub|bathtub)\b", text) and re.search(r"\bback(?:ing|ed)?\s*up\b", text))
+
+
 _RANK = {"none": 0, "advice": 1, "ask": 2, "definite": 3}
 
 
@@ -446,6 +509,19 @@ def _stricter(left: tuple[str, str | None], right: tuple[str, str | None]) -> tu
     if _RANK.get(right[0], 0) > _RANK.get(left[0], 0):
         return right
     return left
+
+
+def _warm_semantic() -> None:
+    """Load the embedder at import so the first caller turn is not the download."""
+    try:
+        from app.agent.hazard_semantic import semantic_hazard
+
+        semantic_hazard("warm the multilingual hazard embedder")
+    except Exception:
+        return
+
+
+_warm_semantic()
 
 
 def _backup(text: str) -> int:

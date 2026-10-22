@@ -288,6 +288,48 @@ def test_media_stream_flushes_on_silence_and_caps_audio(tmp_path):
     store.close()
 
 
+def test_tts_error_falls_back_to_say(tmp_path):
+    service, store = _service(tmp_path)
+    updates = []
+
+    def boom(_text: str) -> bytes:
+        raise RuntimeError("tts 401")
+
+    bridge = MediaBridge(
+        service,
+        synthesize=boom,
+        updater=lambda sid, twiml: updates.append((sid, twiml)),
+    )
+    frames = bridge.handle({"event": "start", "start": {"streamSid": "MZ", "callSid": "CA-tts"}})
+    assert any(frame.get("mark", {}).get("name") == "tts-failed" for frame in frames)
+    assert updates and "<Say" in updates[0][1]
+    again = bridge.apply_transcript("the kitchen drain is clogged")
+    assert any(frame.get("mark", {}).get("name") == "tts-failed" for frame in again)
+    store.close()
+
+
+def test_production_voice_requires_a_twilio_token(tmp_path):
+    settings = _settings(tmp_path, demo_mode=False, admin_token="secret", twilio_auth_token=None)
+    with TestClient(create_app(settings)) as client:
+        health = client.get("/api/health").json()
+        assert health["voice_ready"] is False
+        assert "TWILIO_AUTH_TOKEN" in health["voice_block_reason"]
+        denied = client.post("/api/voice/twilio/incoming", data={"CallSid": "CA", "From": "+15125550100"})
+        assert denied.status_code == 503
+    signed = _settings(tmp_path / "signed", demo_mode=False, admin_token="secret", twilio_auth_token="tok")
+    with TestClient(create_app(signed)) as client:
+        form = {"CallSid": "CA2", "From": "+15125550100"}
+        unsigned = client.post("/api/voice/twilio/incoming", data=form)
+        assert unsigned.status_code == 403
+        url = "http://testserver/api/voice/twilio/incoming"
+        good = client.post(
+            "/api/voice/twilio/incoming",
+            data=form,
+            headers={"X-Twilio-Signature": twilio_signature(url, form, "tok")},
+        )
+        assert good.status_code == 200
+
+
 def test_purge_drops_old_calls(tmp_path):
     service, store = _service(tmp_path)
     service.start("simulator")

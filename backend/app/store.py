@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.agent.calendar import SlotTaken, _digits, _name_matches
@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS events (
     status TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS verification_locks (
+    booking_id TEXT PRIMARY KEY,
+    phone TEXT,
+    failures INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -121,7 +128,7 @@ class Store:
 
     def wipe(self) -> None:
         with self._lock:
-            for table in ("events", "leads", "turns", "bookings", "calls"):
+            for table in ("events", "leads", "turns", "bookings", "verification_locks", "calls"):
                 self.conn.execute(f"DELETE FROM {table}")
             self.conn.commit()
 
@@ -353,6 +360,60 @@ class Store:
             found.append(record)
         return found
 
+    def bookings_with_last4(self, last4: str) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM bookings WHERE status='booked'").fetchall()
+        found = []
+        for row in rows:
+            record = _booking_dict(row)
+            phone = _digits(record.get("phone"))
+            if len(phone) >= 4 and phone[-4:] == str(last4):
+                found.append(record)
+        return found
+
+    def verify_status(self, booking_id: str, now: datetime) -> dict:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT failures, locked_until FROM verification_locks WHERE booking_id=?",
+                (booking_id,),
+            ).fetchone()
+        failures = 0 if row is None else int(row["failures"])
+        locked = None if row is None or not row["locked_until"] else datetime.fromisoformat(row["locked_until"])
+        active = bool(locked and now < locked)
+        return {
+            "failures": failures,
+            "locked_until": locked,
+            "hard_lock": active and failures >= 3,
+            "delayed": active and failures == 2,
+        }
+
+    def record_verify_failure(self, booking_id: str, phone: str, now: datetime) -> dict:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT failures FROM verification_locks WHERE booking_id=?",
+                (booking_id,),
+            ).fetchone()
+            failures = (0 if row is None else int(row["failures"])) + 1
+            locked_until = None
+            if failures == 2:
+                locked_until = (now + timedelta(minutes=10)).isoformat()
+            elif failures >= 3:
+                locked_until = (now + timedelta(hours=24)).isoformat()
+            self.conn.execute(
+                """
+                INSERT INTO verification_locks (booking_id, phone, failures, locked_until, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(booking_id) DO UPDATE SET
+                    phone=excluded.phone,
+                    failures=excluded.failures,
+                    locked_until=excluded.locked_until,
+                    updated_at=excluded.updated_at
+                """,
+                (booking_id, phone, failures, locked_until, now.isoformat()),
+            )
+            self.conn.commit()
+        return {"failures": failures, "alert": failures >= 3, "phone": phone}
+
     def get_call_by_external(self, external_id: str) -> str | None:
         with self._lock:
             row = self.conn.execute(
@@ -524,6 +585,15 @@ class StoreCalendar:
 
     def match_visit(self, last4, day):
         return self.store.match_visit(last4, day)
+
+    def bookings_with_last4(self, last4):
+        return self.store.bookings_with_last4(last4)
+
+    def verify_status(self, booking_id, now):
+        return self.store.verify_status(booking_id, now)
+
+    def record_verify_failure(self, booking_id, phone, now):
+        return self.store.record_verify_failure(booking_id, phone, now)
 
     def book(self, draft):
         return self.store.insert_booking(draft)

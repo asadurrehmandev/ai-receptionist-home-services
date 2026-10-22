@@ -1,13 +1,10 @@
-"""Caller-facing speech is rendered here, from a fixed intent and tool facts.
+"""Caller-facing speech is rendered here, from a fixed intent and a fixed empathy id.
 
-The model may choose an intent and a short empathy line. It may not invent a
-time, a price, a phone number, a promise, or a repair instruction. Anything
-that fails the empathy check is dropped and the rules engine speaks instead.
+The model may choose an intent and an empathy_id. It may not invent a sentence.
+A free-text empathy field is ignored. Unknown ids are dropped.
 """
 
 from __future__ import annotations
-
-import re
 
 INTENTS = (
     "greet",
@@ -23,41 +20,51 @@ INTENTS = (
 
 FIELDS = ("issue", "name", "phone", "address", "time")
 
-_BANNED = re.compile(
-    r"\d|"
-    r"\b(am|pm|noon|midnight|o'clock|oclock|half past|quarter|ish|"
-    r"tomorrow|tonight|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
-    r"january|february|march|april|may|june|july|august|september|october|november|december|"
-    r"dollar|dollars|bucks|percent|free|waive|waived|discount|comp|cheaper|"
-    r"on the house|on the way|within the hour|"
-    r"booked|scheduled|reserved|texted|paged|cancelled|canceled|rescheduled|"
-    r"relight|yourself|diy|i sent|i've sent|i paged|direct line)\b",
-    re.I,
+EMPATHY_IDS = (
+    "sorry",
+    "thanks",
+    "understood",
+    "take_your_time",
+    "glad_to_help",
+    "one_moment",
+    "of_course",
+    "appreciate",
+    "hear_you",
+    "lets_continue",
 )
 
+_EMPATHY = {
+    "sorry": ("I'm sorry you're dealing with that.", "Lamento que esté pasando por esto."),
+    "thanks": ("Thank you for explaining.", "Gracias por explicar."),
+    "understood": ("I understand.", "Entiendo."),
+    "take_your_time": ("Take your time.", "Tómese su tiempo."),
+    "glad_to_help": ("I'm glad to help.", "Con gusto le ayudo."),
+    "one_moment": ("One moment.", "Un momento."),
+    "of_course": ("Of course.", "Por supuesto."),
+    "appreciate": ("I appreciate you calling.", "Agradezco su llamada."),
+    "hear_you": ("I hear you.", "Le escucho."),
+    "lets_continue": ("Let's keep going.", "Sigamos."),
+}
 
-def empathy_ok(text: str | None) -> bool:
-    """A short human line with no facts, promises, or instructions."""
-    raw = (text or "").strip()
-    if not raw:
-        return True
-    if len(raw) > 120:
-        return False
-    if _BANNED.search(raw):
-        return False
-    return True
+
+def empathy_line(empathy_id: str | None, language: str) -> str:
+    """A pre-written line, or empty when the id is unknown."""
+    pair = _EMPATHY.get(empathy_id or "")
+    if pair is None:
+        return ""
+    if language == "es":
+        return pair[1]
+    return pair[0]
 
 
-def render(intent: str, field: str | None, empathy: str | None, facts: dict) -> str | None:
+def render(intent: str, field: str | None, empathy_id: str | None, facts: dict) -> str | None:
     """Fill a template. Return None when the intent cannot be spoken safely."""
     if intent not in INTENTS:
-        return None
-    if not empathy_ok(empathy):
         return None
     body = _body(intent, field, facts)
     if body is None:
         return None
-    prefix = (empathy or "").strip()
+    prefix = empathy_line(empathy_id if isinstance(empathy_id, str) else None, facts.get("language") or "en")
     if prefix:
         return f"{prefix} {body}"
     return body

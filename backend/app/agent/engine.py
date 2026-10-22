@@ -19,6 +19,7 @@ from app.agent.nlu import (
     extract_street,
     extract_zip,
     format_phone,
+    detect_language,
     guess_bare_name,
     house_correction,
     last4_correction,
@@ -28,7 +29,6 @@ from app.agent.nlu import (
     is_no,
     is_spam,
     is_yes,
-    looks_spanish,
     spelled_word,
     wants_abandon,
     wants_cancel,
@@ -159,8 +159,9 @@ class Engine:
                 started,
             )
 
-        if looks_spanish(raw):
-            state.language = "es"
+        detected = detect_language(raw)
+        if state.language == "en" and detected != "en":
+            state.language = detected
 
         if state.phase == "hazard_check":
             level_now, emergency_now = classify_emergency(raw)
@@ -169,8 +170,10 @@ class Engine:
                 self._fill(state, raw)
                 return self._escalate(state, started, state.hazard)
             if is_no(raw):
-                state.phase = "discover"
                 self._fill(state, raw)
+                if state.language != "en":
+                    return self._language_handoff(state, started)
+                state.phase = "discover"
                 return self._continue_intake(state, raw, started)
             else:
                 state.hazard = "Uncertain hazard"
@@ -194,7 +197,13 @@ class Engine:
         if level == "advice":
             self._fill(state, raw)
             state.issue = state.issue or "CO detector battery"
+            if state.language != "en":
+                return self._language_handoff(state, started, prefix=self._line(state, _BATTERY_EN, _BATTERY_ES))
             return self._finish(state, self._line(state, _BATTERY_EN, _BATTERY_ES), started)
+
+        if state.language != "en":
+            self._fill(state, raw)
+            return self._language_handoff(state, started)
 
         if wants_human(raw):
             self._fill(state, raw)
@@ -205,16 +214,6 @@ class Engine:
             state.outcome = "missed"
             state.phase = "closed"
             return self._finish(state, "No problem. We'll be here when you're ready. Goodbye.", started)
-
-        if state.language == "es" and state.phase == "discover" and not state.issue:
-            self._fill(state, raw)
-            if state.issue or detect_intent(raw) == "new_job":
-                return self._continue_intake(state, raw, started)
-            return self._finish(
-                state,
-                "Puedo seguir en español. ¿Qué está pasando: una fuga, sin calor, o algo peligroso? Si huele a gas, salga y llame al 911 o a la compañía de gas.",
-                started,
-            )
 
         if state.phase == "discover" and is_spam(raw):
             state.intent = "spam"
@@ -437,6 +436,17 @@ class Engine:
         if state.hazard:
             return self._escalate(state, started, state.hazard)
         preference = parse_preference(text, self.now)
+        if preference is not None and preference.day is not None:
+            last = self.now + timedelta(days=self.config.horizon_days)
+            if preference.day.date() > last.date():
+                label = f"{last.strftime('%A, %B')} {last.day}"
+                state.phase = "offer"
+                state.offered = []
+                return self._finish(
+                    state,
+                    f"I can book up to {label}. What day before then works?",
+                    started,
+                )
         if preference is not None:
             state.wish = text
         slots, relaxed = available_slots(
@@ -486,6 +496,10 @@ class Engine:
         return self._finish(state, self._line(state, english, spanish), started)
 
     def _on_offer(self, state: SessionState, text: str, started: float) -> TurnResult:
+        note = ""
+        house = house_correction(text)
+        if house and house[0] in (state.address or ""):
+            note = f"I have the house number as {house[0]}. "
         preference = parse_preference(text, self.now)
         offered = self._offered(state)
         choice = match_offered(offered, text)
@@ -494,12 +508,12 @@ class Engine:
         if choice is None:
             return self._finish(
                 state,
-                f"I have {join_slots(offered)}. Which of those works?",
+                f"{note}I have {join_slots(offered)}. Which of those works?",
                 started,
             )
         state.selected = choice.isoformat()
         state.phase = "confirm"
-        return self._finish(state, self._confirm_line(state, choice), started)
+        return self._finish(state, note + self._confirm_line(state, choice), started)
 
     def _on_confirm(self, state: SessionState, text: str, started: float) -> TurnResult:
         if house_correction(text) and state.address:
@@ -630,27 +644,14 @@ class Engine:
         self._note_verification(state, text)
         if not state.verified:
             state.phase = "existing_lookup"
+            locked = self._blocked_booking(state)
+            if locked is not None:
+                return self._lockout(state, started, locked, alert=False)
             found = self._verified_booking(state)
             if found is None:
                 if state.verify_last4 and state.verify_day:
-                    state.verify_fails += 1
-                    key = state.verify_last4
-                    self.verify_fails_by_key[key] = self.verify_fails_by_key.get(key, 0) + 1
                     state.verify_day = None
-                    if state.verify_fails >= 3 or self.verify_fails_by_key[key] >= 3:
-                        return self._lockout(state, started)
-                    state.phase = "existing_lookup"
-                    return self._finish(
-                        state,
-                        self._line(
-                            state,
-                            "I don't have a visit with those last four digits on that day. "
-                            "You can try again. I won't read the street.",
-                            "No tengo una visita con esos cuatro dígitos en ese día. "
-                            "Puede intentar otra vez. No leo la calle.",
-                        ),
-                        started,
-                    )
+                    return self._failed_verify(state, started)
                 return self._finish(
                     state,
                     self._line(
@@ -710,12 +711,85 @@ class Engine:
             events,
         )
 
-    def _lockout(self, state: SessionState, started: float) -> TurnResult:
-        result = self._escalate(state, started, "Verification lockout")
-        event = {"type": "verification_failed", "payload": {"last4": state.verify_last4, "attempts": state.verify_fails}}
-        result.events.append(event)
-        state.events.append(event)
+    def _blocked_booking(self, state: SessionState) -> dict | None:
+        if not state.verify_last4 or not hasattr(self.calendar, "bookings_with_last4"):
+            return None
+        owners = self.calendar.bookings_with_last4(state.verify_last4)
+        if len(owners) != 1 or not hasattr(self.calendar, "verify_status"):
+            return None
+        status = self.calendar.verify_status(owners[0]["id"], self.now)
+        if status.get("hard_lock"):
+            return owners[0]
+        if status.get("delayed") and state.verify_fails < 1:
+            return owners[0]
+        return None
+
+    def _failed_verify(self, state: SessionState, started: float) -> TurnResult:
+        owners = []
+        if hasattr(self.calendar, "bookings_with_last4") and state.verify_last4:
+            owners = self.calendar.bookings_with_last4(state.verify_last4)
+        if len(owners) != 1 or not hasattr(self.calendar, "record_verify_failure"):
+            return self._finish(state, self._verify_miss_line(state), started)
+        recorded = self.calendar.record_verify_failure(owners[0]["id"], owners[0].get("phone") or "", self.now)
+        state.verify_fails += 1
+        if recorded.get("alert"):
+            return self._lockout(state, started, owners[0], alert=True)
+        return self._finish(state, self._verify_miss_line(state), started)
+
+    def _verify_miss_line(self, state: SessionState) -> str:
+        return self._line(
+            state,
+            "I don't have a visit with those last four digits on that day. "
+            "You can try again. I won't read the street.",
+            "No tengo una visita con esos cuatro dígitos en ese día. "
+            "Puede intentar otra vez. No leo la calle.",
+        )
+
+    def _lockout(self, state: SessionState, started: float, booking: dict | None = None, alert: bool = False) -> TurnResult:
+        state.outcome = "locked"
+        state.phase = "closed"
+        say = (
+            "I can't verify that visit. I won't cancel it, and I won't read the address. "
+            "The office will call the number on the booking."
+        )
+        events = [
+            {
+                "type": "verification_failed",
+                "payload": {"last4": state.verify_last4, "attempts": state.verify_fails, "booking_id": (booking or {}).get("id")},
+            }
+        ]
+        if alert and booking and booking.get("phone"):
+            body = (
+                f"{self.config.name}: someone tried to change your visit and could not verify. "
+                "We did not cancel it."
+            )
+            delivery = "not_sent"
+            sender = getattr(self, "sms_sender", None)
+            if sender:
+                result = sender(booking["phone"], body) or {}
+                if result.get("status") == "sent":
+                    delivery = "sent"
+            events.append({"type": "sms", "payload": {"to": booking["phone"], "body": body, "delivery": delivery}})
+        result = self._finish(state, say, started, events)
         return result
+
+    def _language_handoff(self, state: SessionState, started: float, prefix: str = "") -> TurnResult:
+        state.phase = "closed"
+        state.outcome = "qualified"
+        state.intent = state.intent or "handoff"
+        if state.language == "es":
+            say = (
+                "No reservo visitas en español. Una persona de la oficina le devolverá la llamada. "
+                "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."
+            )
+        else:
+            say = (
+                "I can't book a visit in this language. A person will call you back. "
+                "If you smell gas, leave the house and call 911 or your gas company."
+            )
+        if prefix:
+            say = f"{prefix} {say}"
+        return self._finish(state, say, started, self._capture_events(state, "lead.callback"))
 
     def _escalate(self, state: SessionState, started: float, reason: str) -> TurnResult:
         state.outcome = "escalated"

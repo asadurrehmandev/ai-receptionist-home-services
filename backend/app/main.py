@@ -99,6 +99,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "brain": "claude-tools" if settings.llm_ready else "rules",
             "demo_mode": settings.demo_mode,
             "model": settings.anthropic_model if settings.llm_ready else None,
+            "voice_ready": _voice_block_reason() is None,
+            "voice_block_reason": _voice_block_reason(),
         }
 
     @app.get("/api/config")
@@ -193,6 +195,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/voice/twilio/incoming")
     async def twilio_incoming(request: Request):
+        blocked = _voice_block_reason()
+        if blocked:
+            return JSONResponse(status_code=503, content={"detail": blocked})
         form = await _form(request)
         if not _authorized(request, form):
             return Response(status_code=403)
@@ -208,6 +213,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/voice/twilio/gather")
     async def twilio_gather(request: Request):
+        blocked = _voice_block_reason()
+        if blocked:
+            return JSONResponse(status_code=503, content={"detail": blocked})
         form = await _form(request)
         if not _authorized(request, form):
             return Response(status_code=403)
@@ -233,6 +241,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/voice/twilio/dial-status")
     async def twilio_dial_status(request: Request):
+        blocked = _voice_block_reason()
+        if blocked:
+            return JSONResponse(status_code=503, content={"detail": blocked})
         form = await _form(request)
         if not _authorized(request, form):
             return Response(status_code=403)
@@ -265,27 +276,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 datetime.now(config.zone),
             )
             spanish = _caller_language(form.get("CallSid")) == "es"
+            guidance = _missed_guidance(_caller_hazard(form.get("CallSid")), spanish)
+            callback = "Una persona le devolverá la llamada." if spanish else "Someone from the office will call you back."
             if page["status"] == "sent":
-                say = (
-                    f"{config.on_call_name} no contestó. Estamos avisando al técnico de guardia. "
-                    "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."
+                lead = (
+                    f"{config.on_call_name} no contestó. Estamos avisando al técnico de guardia."
                     if spanish
-                    else f"{config.on_call_name} didn't pick up. The on-call tech is being paged. "
-                    "If you smell gas, leave the house and call 911 or your gas company."
+                    else f"{config.on_call_name} didn't pick up. The on-call tech is being paged."
                 )
             else:
-                say = (
-                    f"{config.on_call_name} no contestó. Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas. "
-                    "No hemos enviado un mensaje."
+                lead = (
+                    f"{config.on_call_name} no contestó."
                     if spanish
-                    else f"{config.on_call_name} didn't pick up. If you smell gas, leave the house and call 911 or your gas company. "
-                    "We have not sent a text."
+                    else f"{config.on_call_name} didn't pick up."
                 )
+            honest = "" if page["status"] == "sent" else (" No hemos enviado un mensaje." if spanish else " We have not sent a text.")
+            say = f"{lead} {guidance} {callback}{honest}"
             return Response(content=say_and_hangup(say, "Polly.Lupe" if spanish else voice), media_type="application/xml")
         return Response(content=say_and_hangup("Thanks for holding. Goodbye.", voice), media_type="application/xml")
 
     @app.websocket("/api/voice/stream")
     async def media_stream(websocket: WebSocket):
+        if _voice_block_reason():
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
         bridge = bridge_from_settings(service, settings)
         authorized = bool(settings.demo_mode)
@@ -312,12 +326,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError:
             await websocket.close(code=1003)
 
+    def _voice_block_reason() -> str | None:
+        if settings.demo_mode:
+            return None
+        if not settings.twilio_auth_token:
+            return "Voice will not start without TWILIO_AUTH_TOKEN when DEMO_MODE=0."
+        return None
+
     def _authorized(request: Request, form: dict[str, str]) -> bool:
         return signature_is_valid(
             public_url(request, settings),
             form,
             settings.twilio_auth_token or "",
             request.headers.get("X-Twilio-Signature"),
+            allow_unsigned=settings.demo_mode,
         )
 
     def _gather_action(request: Request) -> str:
@@ -349,6 +371,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         if not _admin_ok.get():
             raise HTTPException(status_code=401, detail="Admin token required")
+
+    def _caller_hazard(call_sid: str | None) -> str | None:
+        if not call_sid:
+            return None
+        call_id = store.get_call_by_external(call_sid)
+        if not call_id:
+            return None
+        try:
+            return store.load_state(call_id).hazard
+        except Exception:
+            return None
 
     def _caller_language(call_sid: str | None) -> str:
         if not call_sid:
@@ -382,6 +415,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     _mount_spa(app, settings.static_dir)
     return app
+
+
+def _missed_guidance(hazard: str | None, spanish: bool) -> str:
+    label = (hazard or "").lower()
+    if "carbon" in label:
+        return (
+            "Saquen a todos afuera, al aire libre, y llamen al 911."
+            if spanish
+            else "Get everyone outside into fresh air and call 911."
+        )
+    if "water" in label or "flood" in label:
+        return (
+            "Si puede hacerlo sin riesgo, cierre la llave principal del agua."
+            if spanish
+            else "If you can do it safely, shut the main water valve."
+        )
+    if "electrical" in label:
+        return (
+            "Aléjese y llame al 911 si hay humo o fuego."
+            if spanish
+            else "Stay away from it and call 911 if you see smoke or fire."
+        )
+    return (
+        "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."
+        if spanish
+        else "If you smell gas, leave the house and call 911 or your gas company."
+    )
 
 
 async def _form(request: Request) -> dict[str, str]:

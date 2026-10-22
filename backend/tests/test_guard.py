@@ -169,6 +169,7 @@ def test_media_stream_token_is_a_single_use_parameter(tmp_path):
         seed_on_start=False,
         demo_mode=False,
         admin_token="desk-token",
+        twilio_auth_token="twilio-test-token",
     )
     scope = {"type": "http", "headers": [], "scheme": "https", "server": ("demo.example", 443), "path": "/", "query_string": b"", "client": ("1.1.1.1", 1), "method": "POST"}
     request = Request(scope)

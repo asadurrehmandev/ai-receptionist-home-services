@@ -21,9 +21,16 @@ def twilio_signature(url: str, params: dict[str, str], token: str) -> str:
     return base64.b64encode(digest).decode("utf-8")
 
 
-def signature_is_valid(url: str, params: dict[str, str], token: str, provided: str | None) -> bool:
+def signature_is_valid(
+    url: str,
+    params: dict[str, str],
+    token: str,
+    provided: str | None,
+    *,
+    allow_unsigned: bool = False,
+) -> bool:
     if not token:
-        return True
+        return bool(allow_unsigned)
     if not provided:
         return False
     expected = twilio_signature(url, params, token)

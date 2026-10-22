@@ -9,6 +9,8 @@ FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt requirements-dev.txt pytest.ini ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
+ENV FASTEMBED_CACHE_PATH=/app/models
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
 COPY backend /app/backend
 COPY config /app/config
 COPY evals /app/evals

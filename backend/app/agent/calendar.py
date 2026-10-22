@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import uuid4
 
@@ -43,6 +43,12 @@ class Calendar(Protocol):
 
     def match_visit(self, last4: str, day: str) -> list[dict]: ...
 
+    def bookings_with_last4(self, last4: str) -> list[dict]: ...
+
+    def verify_status(self, booking_id: str, now: datetime) -> dict: ...
+
+    def record_verify_failure(self, booking_id: str, phone: str, now: datetime) -> dict: ...
+
     def book(self, draft: dict) -> dict: ...
 
     def cancel(self, booking_id: str) -> dict: ...
@@ -53,6 +59,7 @@ class Calendar(Protocol):
 class MemoryCalendar:
     def __init__(self) -> None:
         self.bookings: list[dict] = []
+        self.locks: dict[str, dict] = {}
         self._lock = threading.Lock()
 
     def busy(self) -> list[tuple[datetime, datetime]]:
@@ -88,6 +95,40 @@ class MemoryCalendar:
                 continue
             found.append(booking)
         return found
+
+    def bookings_with_last4(self, last4: str) -> list[dict]:
+        found = []
+        for booking in self.bookings:
+            if booking.get("status") != "booked":
+                continue
+            phone = _digits(booking.get("phone"))
+            if len(phone) >= 4 and phone[-4:] == str(last4):
+                found.append(booking)
+        return found
+
+    def verify_status(self, booking_id: str, now: datetime) -> dict:
+        row = self.locks.get(booking_id) or {}
+        failures = int(row.get("failures") or 0)
+        locked = datetime.fromisoformat(row["locked_until"]) if row.get("locked_until") else None
+        active = bool(locked and now < locked)
+        return {
+            "failures": failures,
+            "locked_until": locked,
+            "hard_lock": active and failures >= 3,
+            "delayed": active and failures == 2,
+        }
+
+    def record_verify_failure(self, booking_id: str, phone: str, now: datetime) -> dict:
+        with self._lock:
+            row = self.locks.get(booking_id) or {"failures": 0, "locked_until": None}
+            failures = int(row.get("failures") or 0) + 1
+            locked_until = None
+            if failures == 2:
+                locked_until = (now + timedelta(minutes=10)).isoformat()
+            elif failures >= 3:
+                locked_until = (now + timedelta(hours=24)).isoformat()
+            self.locks[booking_id] = {"phone": phone, "failures": failures, "locked_until": locked_until}
+        return {"failures": failures, "alert": failures >= 3, "phone": phone}
 
     def book(self, draft: dict) -> dict:
         with self._lock:

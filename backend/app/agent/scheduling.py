@@ -184,7 +184,37 @@ def _holiday(norm: str, now: datetime) -> datetime | None:
     return None
 
 
+def _named_holiday(norm: str, now: datetime) -> datetime | None:
+    if re.search(r"\bthanksgiving\b", norm):
+        found = _nth_date(now.year, 11, 3, 4, now.tzinfo)
+        if found is not None and found.date() < now.date():
+            found = _nth_date(now.year + 1, 11, 3, 4, now.tzinfo)
+        return _midnight(found) if found is not None else None
+    return _holiday(norm, now)
+
+
+_MINUTE_WORD = {
+    "thirty": "30",
+    "fifteen": "15",
+    "forty-five": "45",
+    "forty five": "45",
+    "forty": "40",
+    "twenty": "20",
+}
+
+
 def _spoken_clock(norm: str) -> time | None:
+    compound = re.search(
+        rf"\b{_HOUR_TOKEN}[\s-](thirty|fifteen|forty-five|forty five|forty|twenty)\b(?:\s*(am|pm))?",
+        norm,
+    )
+    if compound:
+        return _hour_from_match(
+            str(_hour_token(compound.group(1))),
+            _MINUTE_WORD[compound.group(2)],
+            compound.group(3),
+            assume_pm=True,
+        )
     half = re.search(rf"\bhalf past\s+{_HOUR_TOKEN}\s*(am|pm)?\b", norm)
     if half:
         return _hour_from_match(str(_hour_token(half.group(1))), "30", half.group(2), assume_pm=True)
@@ -235,6 +265,8 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
         day_until = next_monday + timedelta(days=5)
     elif re.search(r"\bday after tomorrow\b", norm):
         day = _midnight(now + timedelta(days=2))
+    elif re.search(r"\b(?:two weeks from today|two weeks from now|in two weeks)\b", norm):
+        day = _midnight(now + timedelta(days=14))
     elif re.search(r"\bthis weekend\b", norm):
         delta = (5 - now.weekday()) % 7
         day = _midnight(now + timedelta(days=delta))
@@ -245,8 +277,13 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
         day = _midnight(now)
     elif (nth := _nth_in_month(norm, now)) is not None:
         day = nth
-    elif (holiday := _holiday(norm, now)) is not None:
+    elif (holiday := _named_holiday(norm, now)) is not None:
         day = holiday
+    elif (after_next := re.search(
+        r"\b(?:the\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+after next\b",
+        norm,
+    )) is not None:
+        day = _upcoming(now, WEEKDAY_NAMES[after_next.group(1)], force_next=True) + timedelta(days=7)
     elif re.search(r"\bnext week\b", norm):
         days_until_monday = (7 - now.weekday()) % 7 or 7
         next_monday = _midnight(now + timedelta(days=days_until_monday))
@@ -254,6 +291,8 @@ def parse_preference(text: str, now: datetime) -> Preference | None:
         day_until = next_monday + timedelta(days=6)
     else:
         for name, index in WEEKDAY_NAMES.items():
+            if re.search(rf"\bexcept {name}\b", norm):
+                continue
             if re.search(rf"\b{name}\b", norm):
                 day = _upcoming(now, index, force_next=bool(re.search(rf"\bnext {name}\b", norm)))
                 break
@@ -382,6 +421,9 @@ def available_slots(
 
     if preference is None:
         return collect(None), False
+    last = (now + timedelta(days=config.horizon_days)).date()
+    if preference.day is not None and preference.day.date() > last:
+        return [], False
     matched = collect(preference)
     if matched and preference.around is not None:
         matched = sorted(matched, key=lambda moment: abs(_minutes(moment) - _minutes_of(preference.around)))[:limit]

@@ -1,22 +1,24 @@
 """Claude tool-calling dialog. Facts the caller hears are rendered here.
 
-The model picks an intent from a fixed set and may add a short empathy line.
-It does not write clock times, prices, promises, or repair steps. The server
-fills those from tool results. A line that fails the empathy check is dropped
-and the rules engine speaks instead. A hazard is the stricter of the local
-classifier and, when a model is configured, the model's own classification.
+The model picks an intent and an empathy_id from a fixed list. It does not
+write a sentence the caller hears. Booking requires a clear yes to the
+server's read-back of that exact slot. record_caller stores only values taken
+from the caller's own turns. The model's hazard opinion can raise urgency
+only when the local classifier is already asking and the label is a hazard.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from time import monotonic, perf_counter
 
 from app.agent.engine import Engine, SessionState, TurnResult
-from app.agent.hazard import _stricter
+from app.agent.hazard import _RANK
 from app.agent.nlu import (
     classify_emergency,
+    detect_language,
     extract_city,
     extract_phone,
     extract_street,
@@ -25,16 +27,15 @@ from app.agent.nlu import (
     format_phone,
     guess_bare_name,
     is_clean_yes,
-    looks_spanish,
     wants_human,
 )
-from app.agent.scheduling import available_slots, format_slot, join_slots, parse_preference
-from app.agent.speech import FIELDS, INTENTS, render
+from app.agent.scheduling import available_slots, format_slot, join_slots, match_offered, parse_preference
+from app.agent.speech import EMPATHY_IDS, FIELDS, INTENTS, render
 
 TOOL_SPECS = [
     {
         "name": "record_caller",
-        "description": "Store the caller's name, phone, street address, and unit after they say them. The server validates and reads them back.",
+        "description": "Store name, phone, and address only when they appear in the caller's own words. The server ignores anything the caller did not say.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -57,7 +58,7 @@ TOOL_SPECS = [
     },
     {
         "name": "hold_slot",
-        "description": "Hold one slot id that find_slots returned on this call. Requires the caller's name, phone, and service-area address.",
+        "description": "Hold one offered slot when the caller's latest words pick that window. Same-turn booking is refused.",
         "input_schema": {
             "type": "object",
             "properties": {"slot_id": {"type": "string"}},
@@ -66,7 +67,7 @@ TOOL_SPECS = [
     },
     {
         "name": "book",
-        "description": "Book a slot id that find_slots returned. Requires name, a 10-digit phone, and an in-area address.",
+        "description": "Book only after the caller says a clear yes to the server's read-back of that exact slot on a previous turn.",
         "input_schema": {
             "type": "object",
             "properties": {"slot_id": {"type": "string"}},
@@ -106,21 +107,30 @@ TOOL_SPECS = [
     {
         "name": "speak",
         "description": (
-            "Choose the caller-facing intent. Do not put digits, times, prices, promises, "
-            "or instructions in empathy. The server writes every fact."
+            "Choose the caller-facing intent and an empathy_id. Do not write a sentence. "
+            "The server speaks a fixed line for that id and fills every fact."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "intent": {"type": "string", "enum": list(INTENTS)},
                 "field": {"type": "string", "enum": list(FIELDS)},
-                "empathy": {"type": "string"},
-                "slot_id": {"type": "string"},
+                "empathy_id": {"type": "string", "enum": list(EMPATHY_IDS)},
             },
             "required": ["intent"],
         },
     },
 ]
+
+_HAZARD_LABELS = {
+    "Gas",
+    "Carbon monoxide",
+    "Active water",
+    "Electrical hazard",
+    "Unsafe indoor temperature",
+    "Caller said emergency",
+    "Hazard signals",
+}
 
 _HAZARD_SPEC = {
     "name": "classify_hazard",
@@ -148,16 +158,22 @@ class Dialog:
 
     def handle(self, state: SessionState, text: str) -> TurnResult:
         raw = text or ""
-        if looks_spanish(raw):
-            state.language = "es"
+        detected = detect_language(raw)
+        if state.language == "en" and detected != "en":
+            state.language = detected
+        state.turn_selected = state.selected if state.phase == "confirm" else None
         local = classify_emergency(raw)
         remote = ("none", None)
-        if self.model is not None and local[0] != "definite":
+        if self.model is not None and _RANK.get(local[0], 0) >= _RANK["ask"] and local[0] != "definite":
             remote = _claude_hazard(self.model, raw)
-        level, label = _stricter(local, remote)
-        if level == "definite" and label:
+        level, label = _raise_hazard(local, remote)
+        if (
+            level == "definite"
+            and label
+            and _RANK.get(local[0], 0) >= _RANK["ask"]
+        ):
             state.hazard = label
-        if state.hazard or wants_human(raw) or level in {"definite", "ask", "advice"}:
+        if state.hazard or wants_human(raw) or level in {"definite", "ask", "advice"} or state.language != "en":
             return self.engine.handle(state, raw)
         if self.model is None:
             return self.engine.handle(state, raw)
@@ -166,6 +182,8 @@ class Dialog:
         except Exception:
             result = self.engine.handle(state, raw)
         _remember(state, raw, result.say)
+        if result.say:
+            state.last_reply = result.say
         return result
 
     def _model_turn(self, state: SessionState, text: str) -> TurnResult:
@@ -239,18 +257,18 @@ class Dialog:
 
     def _execute(self, state: SessionState, utterance: str, name: str, payload: dict) -> tuple[dict, str, TurnResult | None]:
         if name == "record_caller":
-            return self._record(state, payload)
+            return self._record(state, utterance, payload)
         if name == "find_slots":
             body, say = self._find_slots(state, str(payload.get("preference") or utterance))
             return body, say, None
         if name == "hold_slot":
-            body, say = self._hold(state, str(payload.get("slot_id") or ""))
+            body, say = self._hold(state, utterance, str(payload.get("slot_id") or ""))
             return body, say, None
         if name == "book":
-            refusal = self._refuse_slot(state, str(payload.get("slot_id") or state.selected or ""))
-            if refusal:
-                return refusal[0], refusal[1], None
-            state.selected = str(payload.get("slot_id") or state.selected or "")
+            slot_id = str(payload.get("slot_id") or "")
+            if not _booking_consented(state, utterance, slot_id):
+                say = "I need a clear yes to the time I just read back before I book it."
+                return {"ok": False, "error": "The caller has not agreed to that exact slot."}, say, None
             result = self.engine._book(
                 state,
                 perf_counter(),
@@ -281,11 +299,9 @@ class Dialog:
     def _speak(self, state: SessionState, utterance: str, payload: dict) -> tuple[dict, str, None]:
         intent = str(payload.get("intent") or "")
         field = payload.get("field")
-        empathy = payload.get("empathy")
-        if payload.get("slot_id") and str(payload.get("slot_id")) in state.offered:
-            state.selected = str(payload["slot_id"])
+        empathy_id = payload.get("empathy_id") if isinstance(payload.get("empathy_id"), str) else None
         facts = self._facts(state, utterance)
-        spoken = render(intent, field if isinstance(field, str) else None, empathy if isinstance(empathy, str) else None, facts)
+        spoken = render(intent, field if isinstance(field, str) else None, empathy_id, facts)
         if spoken is None:
             return {"ok": False, "speak_rejected": True, "error": "That line cannot be spoken."}, "", None
         return {"ok": True, "rendered": spoken, "say": spoken}, spoken, None
@@ -309,18 +325,17 @@ class Dialog:
             "on_call": self.engine.config.on_call_name,
         }
 
-    def _record(self, state: SessionState, payload: dict) -> tuple[dict, str, None]:
-        name = guess_bare_name(str(payload.get("name") or ""))
-        phone, _blank = extract_phone(str(payload.get("phone") or ""))
-        address_text = " ".join(
-            part for part in (str(payload.get("address") or ""), str(payload.get("unit") or "")) if part
-        )
-        street = extract_street(address_text, self.engine.config.cities)
-        unit = extract_unit(address_text)
+    def _record(self, state: SessionState, utterance: str, payload: dict) -> tuple[dict, str, None]:
+        del payload
+        turns = _caller_turns(state, utterance)
+        name = _first(turns, guess_bare_name)
+        phone = _first(turns, lambda text: extract_phone(text)[0])
+        street = _first(turns, lambda text: extract_street(text, self.engine.config.cities))
+        unit = _first(turns, extract_unit)
         if street and unit and unit.lower() not in street.lower():
             street = f"{street} {unit}"
-        found_zip = extract_zip(address_text)
-        city = extract_city(address_text, self.engine.config.cities)
+        found_zip = _first(turns, extract_zip)
+        city = _first(turns, lambda text: extract_city(text, self.engine.config.cities))
         if name:
             state.name = name
         if phone:
@@ -340,11 +355,13 @@ class Dialog:
             missing.append("phone")
         if not state.street:
             missing.append("address")
+        facts = {"language": state.language, "business": self.engine.config.name, "agent": self.engine.config.agent_name}
         if missing:
             field = {"name": "name", "phone": "phone", "address": "address"}[missing[0]]
-            spoken = render("ask_field", field, None, {"language": state.language, "business": self.engine.config.name, "agent": self.engine.config.agent_name})
+            spoken = render("ask_field", field, None, facts)
             return {"ok": False, "missing": missing, "say": spoken}, spoken or "", None
-        spoken = _read_back(state)
+        follow = render("ask_field", "time", None, facts) or ""
+        spoken = f"{_read_back(state)} {follow}".strip()
         return {"ok": True, "name": state.name, "phone": state.phone, "address": state.address, "say": spoken}, spoken, None
 
     def _find_slots(self, state: SessionState, preference_text: str) -> tuple[dict, str]:
@@ -364,10 +381,15 @@ class Dialog:
         payload = {"slots": [{"id": slot.isoformat(), "label": format_slot(slot)} for slot in slots], "say": spoken}
         return payload, spoken
 
-    def _hold(self, state: SessionState, slot_id: str) -> tuple[dict, str]:
+    def _hold(self, state: SessionState, utterance: str, slot_id: str) -> tuple[dict, str]:
         refusal = self._refuse_slot(state, slot_id)
         if refusal:
             return {"ok": False, "error": refusal[0]["error"]}, refusal[1]
+        if not _utterance_picks(state, utterance, slot_id, self.engine.now):
+            return (
+                {"ok": False, "error": "The caller has not picked that window."},
+                "Which of the windows I offered should I hold?",
+            )
         state.selected = slot_id
         state.phase = "confirm"
         facts = self._facts(state, "")
@@ -436,6 +458,73 @@ def _claude_hazard(model, text: str) -> tuple[str, str | None]:
             label = payload.get("label")
             return level, label if isinstance(label, str) and label else None
     return "none", None
+
+
+def _caller_turns(state: SessionState, utterance: str) -> list[str]:
+    turns = [str(message.get("content") or "") for message in state.messages if message.get("role") == "user"]
+    turns.append(utterance or "")
+    return [turn for turn in turns if turn.strip()]
+
+
+def _first(turns: list[str], reader):
+    for turn in reversed(turns):
+        found = reader(turn)
+        if found:
+            return found
+    return None
+
+
+def _utterance_picks(state: SessionState, utterance: str, slot_id: str, now: datetime) -> bool:
+    if slot_id not in state.offered:
+        return False
+    offered = [datetime.fromisoformat(item) for item in state.offered]
+    target = datetime.fromisoformat(slot_id)
+    choice = match_offered(offered, utterance)
+    if choice is not None and choice.isoformat() == slot_id:
+        return True
+    norm = (utterance or "").lower()
+    index = state.offered.index(slot_id)
+    if index == 0 and re.search(r"\b(first|earliest|soonest)\b", norm):
+        return True
+    if index == 1 and re.search(r"\bsecond\b", norm):
+        return True
+    if index == 2 and re.search(r"\b(third|last)\b", norm):
+        return True
+    preference = parse_preference(utterance, now)
+    if preference is not None and preference.around is not None:
+        if target.hour == preference.around.hour and abs(target.minute - preference.around.minute) <= 30:
+            return True
+    clock = target.hour % 12 or 12
+    if re.search(rf"\b{clock}\b", norm) and re.search(r"\b(o'clock|oclock|am|pm)\b", norm):
+        return True
+    return False
+
+
+def _booking_consented(state: SessionState, utterance: str, slot_id: str) -> bool:
+    if state.phase != "confirm" or not slot_id or state.selected != slot_id:
+        return False
+    if getattr(state, "turn_selected", None) != slot_id:
+        return False
+    if not is_clean_yes(utterance):
+        return False
+    reply = state.last_reply or ""
+    try:
+        moment = datetime.fromisoformat(slot_id)
+    except ValueError:
+        return False
+    label = format_slot(moment)
+    return label in reply or (format_slot(moment).split(" at ")[0] in reply and str(moment.hour % 12 or 12) in reply)
+
+
+def _raise_hazard(local: tuple[str, str | None], remote: tuple[str, str | None]) -> tuple[str, str | None]:
+    """The model may raise an ask to a definite hazard. It cannot create one."""
+    if _RANK.get(local[0], 0) < _RANK["ask"]:
+        return local
+    if _RANK.get(remote[0], 0) <= _RANK.get(local[0], 0):
+        return local
+    if remote[1] not in _HAZARD_LABELS:
+        return local
+    return remote
 
 
 def _remember(state: SessionState, caller: str, reply: str) -> None:
