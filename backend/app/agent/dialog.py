@@ -29,6 +29,7 @@ from app.agent.nlu import (
     wants_human,
 )
 from app.agent.scheduling import available_slots, format_slot, join_slots, match_offered, parse_preference
+from app.agent.nlu import FIELD_PHASES
 from app.agent.understand import assess_caller_turn, understand_enabled
 from app.agent.speech import EMPATHY_IDS, FIELDS, INTENTS, render
 
@@ -162,6 +163,8 @@ class Dialog:
         if state.language == "en" and detected != "en":
             state.language = detected
         state.turn_selected = state.selected if state.phase == "confirm" else None
+        if state.phase in FIELD_PHASES:
+            return self.engine.handle(state, raw)
         local = assess_caller_turn(raw)
         remote = ("none", None)
         if (

@@ -222,19 +222,16 @@ def test_understander_schema_and_merge_keep_plain_jobs_off_the_page_line():
     booked = merge_understanding("Please replace the noisy sump pump.", ("none", None), plain)
     assert booked[0] == "none"
     missing = merge_understanding("There is a weird smell in the closet.", ("none", None), None)
-    assert missing[0] == "ask"
-    assert missing[1] == "Understander unavailable"
+    assert missing == ("none", None)
 
 
-def test_a_missing_understander_offers_a_person_or_a_callback(monkeypatch):
-    monkeypatch.setenv("UNDERSTAND_EACH_TURN", "1")
-    monkeypatch.setattr("app.agent.understand.understand_turn", lambda _text: None)
+def test_a_closet_smell_asks_and_a_sump_books_without_a_local_model():
     engine = _engine()
     state = SessionState()
     heard = engine.handle(state, "There is a weird smell in the closet.")
     assert state.outcome != "escalated"
     assert state.phase == "hazard_check"
-    assert "call you back" in heard.say.lower()
+    assert "danger" in heard.say.lower()
     plain = SessionState()
     booked = engine.handle(plain, "Please replace the noisy sump pump in the basement.")
     assert plain.phase != "hazard_check"

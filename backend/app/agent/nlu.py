@@ -222,7 +222,9 @@ def looks_spanish(text: str) -> bool:
     return len(hits) >= 2 or "hola" in hits or "huele" in hits
 
 
-_OTHER_SCRIPT = re.compile(r"[\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0600-\u06FF]")
+_OTHER_SCRIPT = re.compile(
+    r"[\u0400-\u04FF\u0900-\u097F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0600-\u06FF]"
+)
 _OTHER_WORDS = (
     "odeur",
     "gaz",
@@ -281,6 +283,7 @@ def detect_intent(text: str) -> str:
         r"chilly|cold room|breaker tripped|tripped (?:the )?breaker|blank screen|tune[- ]?up|"
         r"spigots?|hose bibs?|bibbs?|sillcocks?|water pressure|low pressure|shower pressure|"
         r"sump|exhaust fan|gfci|gfi|flood sensors?|softener|check-?up|checkup|replac\w*|"
+        r"heat[- ]?pump|annual service|yearly service|yearly check|annual check|maintenance visit|"
         r"landlord|rental unit|inspection)\b",
         norm,
     ):
@@ -476,6 +479,8 @@ _NATURAL_NO = re.compile(
     r"\bnot at all\b|"
     r"\bnothing like that\b|"
     r"\bnot that i know of\b|"
+    r"\bnot that i can tell\b|"
+    r"\ball clear\b|"
     r"\bwe(?:'re| are) (?:fine|ok|okay|safe|good)\b|"
     r"\ball good\b|"
     r"\beveryone(?:'s| is) (?:fine|ok|okay|safe|good)\b|"
@@ -499,14 +504,26 @@ def _natural_no(text: str) -> bool:
     return bool(_NATURAL_NO.search(text or ""))
 
 
+_SAFETY_YES = re.compile(r"\b(yes|yeah|yep|yup)\b", re.I)
+_FLED = re.compile(
+    r"\b(got out|gotten out|left the (?:house|building|home)|evacuat\w*|"
+    r"went outside|stepped outside|(?:are|we're|we are) outside|standing outside|"
+    r"exited the house|moved out to)\b",
+    re.I,
+)
+
+
 def safety_decision(text: str) -> str:
     """How to treat an answer to the safety question.
 
-    Harm, a hedge, or urgency pages. A natural no clears unless the rest of
-    the turn still describes a definite hazard. An unclear answer pages.
+    A yes pages even if the caller adds that they have gone outside. A natural
+    no clears unless the rest of the turn still describes a definite hazard.
+    An unclear answer pages.
     """
     raw = text or ""
     if reports_harm(raw):
+        return "page"
+    if _SAFETY_YES.search(raw) or (_FLED.search(raw) and not _natural_no(raw)):
         return "page"
     if _hedge_or_urgency(raw):
         return "page"
@@ -912,6 +929,32 @@ def fallback_name(text: str) -> str:
         return " ".join(_proper_token(part) for part in tokens[:3])
     raw = " ".join((text or "").split())
     return raw[:40] or "Caller"
+
+
+_FIELD_INSTRUCTION = re.compile(
+    r"\b(ignore (?:all |any )?(?:previous|prior|above) instructions|"
+    r"treat (?:this|it) as|mark (?:this|it) as|classify (?:this|it)|"
+    r"you are now|system prompt|page the on-call|send the on-call|"
+    r"disregard (?:the |your )?(?:rules|instructions)|new instructions)\b",
+    re.I,
+)
+FIELD_PHASES = {
+    "collect_name",
+    "collect_phone",
+    "collect_address",
+    "collect_zip",
+    "offer",
+    "confirm",
+    "quote_decision",
+    "confirm_cancel",
+}
+
+
+def strip_field_instructions(text: str) -> str:
+    """A name or address is data. Instruction-like sentences in it are dropped."""
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text or "")
+    kept = [part.strip() for part in parts if part.strip() and not _FIELD_INSTRUCTION.search(part)]
+    return " ".join(kept).strip()
 
 
 def extract_caller_name(turns: list[str], asked_field: str | None, current: str) -> str | None:

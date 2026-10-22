@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 _NEGATED = re.compile(
-    r"\b(?:no|not|without|don't|dont|do not|sin|no hay|isn't|isnt|nothing)\b"
+    r"\b(?:no|not|without|don't|dont|do not|sin|no hay|isn't|isnt|nothing|nahi|nahin)\b"
     r"(?:\s+(?:a|an|any|the|just|really|even|of)){0,2}\s+"
     r"(?:gas|smells?|smelling|odor\w*|odour\w*|stinks?|stinking|reeks?|reeking|"
     r"whiff\w*|fumes?|leak\w*|sparks?|sewage|humo|olor)\b",
@@ -456,6 +456,38 @@ def _present_patterns(text: str) -> tuple[str, str] | None:
         _COMFORT.search(text) or re.search(r"\bno heat\b", text)
     ):
         return "definite", "Unsafe indoor temperature"
+    foreign = _foreign_hazard(text)
+    if foreign is not None:
+        return foreign
+    if re.search(r"\btingl\w*\b", text) and re.search(
+        r"\b(faucet|fixture|appliance|rail(?:ing)?|washer|dryer|switch|outlet|handle|knob|light|tap)\b",
+        text,
+    ):
+        return "definite", "Electrical hazard"
+    if _hit(text, re.compile(r"\bsmok(?:e|ing)\b", re.I)) and not re.search(
+        r"\bsmoke\s+(?:alarm|detector)s?\b", text
+    ) and not _COOKING.search(text):
+        return "definite", "Electrical hazard"
+    return None
+
+
+def _foreign_hazard(text: str) -> tuple[str, str] | None:
+    """A small lexicon for gas, smoke, fire, shock, and flooding outside English.
+
+    Latin diacritics are already folded off. Arabic-script and Devanagari stay.
+    """
+    if re.search(r"\bgaz\b", text) and re.search(r"\b(czuj\w*|zapach\w*|smierdz\w*|zawrot\w*|ulatnia\w*)\b", text):
+        return "definite", "Gas"
+    if re.search(r"گیس", text) and re.search(r"بو", text):
+        return "definite", "Gas"
+    if re.search(r"\b(pozar|dym|dhua+n|dhuan)\b", text) or re.search(r"دھواں", text):
+        return "definite", "Electrical hazard"
+    if re.search(r"\baag\b", text) or re.search(r"آگ", text):
+        return "definite", "Electrical hazard"
+    if re.search(r"\b(kopna\w*|porazen\w*|calambre|jhatk\w*)\b", text) or re.search(r"جھٹک", text):
+        return "definite", "Electrical hazard"
+    if re.search(r"\bzalan\w*\b", text) or re.search(r"\bpani bhar\b|\bpaani bhar\b", text):
+        return "definite", "Active water"
     return None
 
 
@@ -509,8 +541,11 @@ def _negated_at(clause: str, index: int) -> bool:
     tail = words[-5:]
     if {"sure", "idea", "certain"} & set(tail):
         return False
-    negations = {"no", "not", "without", "sin", "isn't", "isnt", "nothing", "never", "dont"}
-    return any(word in negations for word in tail)
+    negations = {"no", "not", "without", "sin", "isn't", "isnt", "nothing", "never", "dont", "nahi", "nahin"}
+    if any(word in negations for word in tail):
+        return True
+    after = clause[index : index + 28]
+    return bool(re.search(r"\b(nahi|nahin)\b", after, re.I))
 
 
 def _unnegated(clause: str, pattern: re.Pattern[str]) -> bool:
@@ -534,8 +569,8 @@ def _gas(clause: str) -> bool:
             return True
     stripped = _NEGATED.sub(" ", clause)
     negated = stripped != clause
-    if _GAS_WORD.search(stripped) and (
-        _GAS_SIGNAL.search(stripped) or re.search(r"\bgas\s+leak\b|\bleak(?:ing)?\s+gas\b", stripped)
+    if _hit(clause, _GAS_WORD) and (
+        _hit(clause, _GAS_SIGNAL) or _hit(clause, re.compile(r"\bgas\s+leak\b|\bleak(?:ing)?\s+gas\b", re.I))
     ):
         return True
     if negated:
@@ -681,6 +716,8 @@ def _emergency_word(clause: str) -> bool:
     if _NOT_EMERGENCY.search(clause):
         return False
     if re.search(r"\b(fee|charge|how much|price|cost|do you do)\b", clause):
+        return False
+    if re.search(r"\b(emergency plan|safety plan|fire drill|practice drill|household plan)\b", clause):
         return False
     if re.search(r"\bemergency\s+(?:fund|savings|contact|contacts|kit)\b", clause):
         return False
@@ -1103,7 +1140,7 @@ _GARAGE_SICK = re.compile(
     r"hard to wake|won't wake|wont wake|will not wake|passed out)\b",
     re.I,
 )
-_STRUCT_DEFORM = re.compile(r"\b(bow\w*|sag\w*|bulg\w*|swollen|sheeting|tracking)\b", re.I)
+_STRUCT_DEFORM = re.compile(r"\b(bow\w*|sag\w*|bulg\w*|balloon\w*|swollen|sheeting|tracking)\b", re.I)
 _STRUCT_SURFACE = re.compile(r"\b(ceiling|drywall|plaster|stair)\b", re.I)
 _DEPTH = re.compile(
     r"\b(?:\d+|one|two|three|four|five|six|several)\s+(?:inch(?:es)?|foot|feet)\s+of\s+water\b",
@@ -1336,10 +1373,13 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         return patterned
     if (
         _plain_job(folded)
+        and _present_patterns(folded) is None
+        and not _water(folded)
+        and not _structural_water(folded)
         and not _SYMPTOM.search(folded)
         and not _fire_or_smoke(folded)
         and not _gas_anywhere(folded)
-        and not re.search(r"\b(smoke|spark\w*|flame\w*|flooding|burst\w*)\b", folded)
+        and not re.search(r"\b(smoke|spark\w*|flame\w*|flooding|burst\w*|tingl\w*|shock\w*)\b", folded)
     ):
         return "none", None
     if _battery_advice(folded) and not _other_hazard(folded):
@@ -1584,8 +1624,7 @@ def _backup(text: str) -> int:
 
 def _backup_clause(clause: str) -> int:
     score = 0
-    remaining = _NEGATED.sub(" ", clause)
-    if re.search(r"\b(gas|propane)\b", remaining) and _GAS_SIGNAL.search(remaining):
+    if _hit(clause, re.compile(r"\b(gas|propane)\b", re.I)) and _hit(clause, _GAS_SIGNAL):
         score += 3
     if _unnegated(clause, re.compile(r"\b(sparks?|sparking|chispas)\b", re.I)):
         score += 3

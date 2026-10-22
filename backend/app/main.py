@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.hazard_nli import nli_ready
 from app.agent.hazard_semantic import semantic_ready
-from app.agent.understand import understand_enabled, understand_ready, understander_name
+from app.agent.understand import classifier_mode, understand_ready, understander_name
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
 from app.seed import seed_demo
@@ -98,8 +98,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health():
         semantic = semantic_ready()
         nli = nli_ready()
-        understand = understand_ready()
-        ready = semantic and nli and (understand or not understand_enabled())
+        degraded = [name for name, ready_flag in (("semantic", semantic), ("nli", nli)) if not ready_flag]
+        ready = not degraded
         body = {
             "ok": ready,
             "business": config.name,
@@ -109,14 +109,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "twilio_signature": bool(settings.twilio_auth_token),
             "media_stream_ready": settings.media_stream_ready,
             "brain": "claude-tools" if settings.llm_ready else "rules",
+            "classifier": classifier_mode(),
             "demo_mode": settings.demo_mode,
             "model": settings.anthropic_model if settings.llm_ready else None,
             "voice_ready": _voice_block_reason() is None,
             "voice_block_reason": _voice_block_reason(),
             "semantic_ready": semantic,
             "nli_ready": nli,
-            "understand_ready": understand,
-            "understander": understander_name() if understand_enabled() or understand else "keyword",
+            "understand_ready": understand_ready(),
+            "understander": understander_name(),
+            "degraded": degraded,
         }
         if not ready:
             return JSONResponse(status_code=503, content=body)
@@ -231,12 +233,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(content=xml, media_type="application/xml")
 
     def _wants_filler(speech: str) -> bool:
-        return bool(
-            speech
-            and understand_enabled()
-            and understand_ready()
-            and not settings.anthropic_api_key
-        )
+        """Keyless turns stay on the keyword screen, so the gather does not say 'One moment.'"""
+        return False
 
     @app.post("/api/voice/twilio/gather")
     async def twilio_gather(request: Request):

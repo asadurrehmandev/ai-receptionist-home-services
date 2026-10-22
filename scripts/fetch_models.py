@@ -28,15 +28,6 @@ def main() -> None:
         hf_hub_download(nli_repo, name, local_dir=str(nli))
     print("nli ready", nli)
 
-    instruct = models / "instruct"
-    instruct.mkdir(parents=True, exist_ok=True)
-    path = hf_hub_download(
-        "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        "qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        local_dir=str(instruct),
-    )
-    print("instruct ready", path)
-
 
 if __name__ == "__main__":
     main()

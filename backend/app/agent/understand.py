@@ -20,7 +20,7 @@ from typing import Iterator, Literal
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.agent.hazard import classify_emergency, framed_entirely_away, mentions_hazard_noun, plain_job_text
-from app.agent.nlu import extract_introduced_name, extract_street, reports_harm, safety_decision
+from app.agent.nlu import extract_introduced_name, extract_street, safety_decision
 
 Intent = Literal["emergency", "booking", "reschedule", "cancel", "question", "other"]
 HazardLevel = Literal["none", "possible", "present"]
@@ -127,15 +127,15 @@ class TurnUnderstanding(BaseModel):
 
 
 def understand_enabled() -> bool:
-    """Pytest leaves this off so the suite stays on the keyword screen."""
+    """Claude is additive, and only when a key is set. The local model is not on the call path."""
     if getattr(_pause, "off", False):
         return False
-    return os.environ.get("UNDERSTAND_EACH_TURN", "").strip().lower() in {"1", "true", "yes"}
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
 @contextmanager
 def pause_understand() -> Iterator[None]:
-    """Seed scripts stay on the keyword screen even when the demo flag is on."""
+    """Seed scripts stay on the keyword screen even when an API key is set."""
     previous = getattr(_pause, "off", False)
     _pause.off = True
     try:
@@ -155,22 +155,19 @@ def model_path() -> str:
 def understander_name() -> str:
     if os.environ.get("ANTHROPIC_API_KEY"):
         return os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
-    if os.path.isfile(model_path()):
-        return "qwen2.5-1.5b-instruct-q4"
+    return "keyword"
+
+
+def classifier_mode() -> str:
+    """The path that actually labels a live turn. A model file on disk is not a mode."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "claude"
     return "keyword"
 
 
 def understand_ready() -> bool:
-    """True when the primary or the local model can be called. Does not load weights."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return True
-    if not os.path.isfile(model_path()):
-        return False
-    try:
-        import llama_cpp  # noqa: F401
-    except Exception:
-        return False
-    return True
+    """True only when Claude can be called. A local file is not treated as ready."""
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
 def last_latency_ms() -> float | None:
@@ -188,16 +185,15 @@ def understand_turn(text: str) -> TurnUnderstanding | None:
         return None
     if key in _cache:
         return _cache[key]
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        parsed = _from_claude(key)
-    else:
-        parsed = _from_local(key)
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return None
+    parsed = _from_claude(key)
     _cache[key] = parsed
     return parsed
 
 
 def assess_caller_turn(text: str) -> tuple[str, str | None]:
-    """Keyword screen, plus the understander when the demo flag is on."""
+    """Keyword screen, plus Claude when an API key is set."""
     keyword = classify_emergency(text)
     if not understand_enabled():
         return keyword
@@ -212,16 +208,13 @@ def merge_understanding(
     """Page on a present-tense keyword hit or on hazard=present.
 
     Past-only, hypothetical, plain jobs, and instruction-only turns cannot be
-    paged by the model. A missing model keeps the keyword screen and marks an
-    unresolved hazard noun as a question, which offers a person or a callback.
+    paged by the model. A missing model leaves the keyword decision unchanged.
     """
     level, label = keyword
     if level == "definite":
         return keyword
     suppress = plain_job_text(text) or framed_entirely_away(text)
     if understood is None:
-        if level == "none" and mentions_hazard_noun(text) and not suppress:
-            return "ask", "Understander unavailable"
         return keyword
     if understood.hazard == "present" and not suppress and understood.temporal == "current":
         support = _CLASS_SUPPORT.get(understood.hazard_class)
@@ -233,28 +226,18 @@ def merge_understanding(
         return keyword
     if understood.hazard == "possible" and level == "none" and not suppress:
         return "ask", "Uncertain hazard"
-    if understood.hazard == "none" and plain_job_text(text) and level == "ask":
-        return "none", None
     return keyword
 
 
 def combine_safety(text: str, understood: TurnUnderstanding | None) -> str:
-    """Regex is the floor. A model 'no' can clear when the regex still pages.
-
-    Harm, a hedge, or a definite hazard in the remainder still pages. A regex
-    clear is never turned into a page by the model.
-    """
+    """The rules decide. Claude may only raise a turn, never lower a page or a yes."""
     decision = safety_decision(text)
+    if decision == "page":
+        return "page"
     if decision in {"clear", "callback"}:
         return decision
-    if reports_harm(text):
+    if understood is not None and understood.hazard == "present" and understood.temporal == "current":
         return "page"
-    if (
-        understood is not None
-        and understood.danger_answer == "no"
-        and understood.hazard == "none"
-    ):
-        return "clear"
     return decision
 
 
@@ -286,7 +269,7 @@ def _from_claude(text: str) -> TurnUnderstanding | None:
                 "tool_choice": {"type": "tool", "name": "classify_turn"},
                 "messages": [{"role": "user", "content": text[:1500]}],
             },
-            timeout=4.0,
+            timeout=1.5,
         )
         response.raise_for_status()
         body = response.json()

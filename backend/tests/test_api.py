@@ -42,6 +42,10 @@ def test_health_reports_rule_brain(client):
     body = response.json()
     assert body["ok"] is True
     assert body["brain"] == "rules"
+    assert body["classifier"] == "keyword"
+    assert body["understander"] == "keyword"
+    assert body["understand_ready"] is False
+    assert body["degraded"] == []
     assert body["llm"] is False
     assert body["media_stream_ready"] is False
     assert "Northline" in body["business"]

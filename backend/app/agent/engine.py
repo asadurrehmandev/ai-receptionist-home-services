@@ -36,6 +36,8 @@ from app.agent.nlu import (
     wants_cancel,
     wants_human,
     wants_reschedule,
+    FIELD_PHASES,
+    strip_field_instructions,
 )
 from app.agent.hazard import framed_entirely_away, mentions_hazard_noun, plain_job_text
 from app.agent.scheduling import available_slots, format_slot, join_slots, latest_on_day, match_offered, parse_preference
@@ -185,19 +187,24 @@ class Engine:
         if state.hazard:
             return self._escalate(state, started, state.hazard)
 
-        level, emergency = assess_caller_turn(raw)
-        if level == "ask" and emergency == "Hazard model unavailable":
+        screening = state.phase not in FIELD_PHASES
+        if screening:
+            level, emergency = assess_caller_turn(raw)
+        else:
+            raw = strip_field_instructions(raw)
+            level, emergency = "none", None
+        if screening and level == "ask" and emergency == "Hazard model unavailable":
             if state.degraded_asked:
                 level, emergency = "none", None
             else:
                 state.degraded_asked = True
-        if level == "definite" and emergency:
+        if screening and level == "definite" and emergency:
             self._fill(state, raw)
             state.intent = "emergency"
             state.issue = emergency
             state.hazard = emergency
             return self._escalate(state, started, emergency)
-        if level == "ask":
+        if screening and level == "ask":
             self._fill(state, raw)
             state.phase = "hazard_check"
             state.issue = state.issue or emergency
@@ -205,7 +212,8 @@ class Engine:
                 return self._finish(state, self._line(state, _OFFER_EN, _OFFER_ES), started)
             return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
         if (
-            level == "none"
+            screening
+            and level == "none"
             and not understand_enabled()
             and mentions_hazard_noun(raw)
             and not plain_job_text(raw)
@@ -216,18 +224,18 @@ class Engine:
             state.phase = "hazard_check"
             state.issue = state.issue or "Possible hazard"
             return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
-        if level == "advice":
+        if screening and level == "advice":
             self._fill(state, raw)
             state.issue = state.issue or "CO detector battery"
             if state.language != "en":
                 return self._language_handoff(state, started, prefix=self._line(state, _BATTERY_EN, _BATTERY_ES))
             return self._finish(state, self._line(state, _BATTERY_EN, _BATTERY_ES), started)
 
-        if state.language != "en":
+        if screening and state.language != "en":
             self._fill(state, raw)
             return self._language_handoff(state, started)
 
-        if wants_human(raw):
+        if screening and wants_human(raw):
             self._fill(state, raw)
             state.intent = state.intent or "handoff"
             return self._escalate(state, started, "Caller requested a person")

@@ -5,7 +5,6 @@ cd "$(dirname "$0")"
 
 python3 -m venv .venv
 .venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt
-.venv/bin/pip install -q --only-binary=:all: "llama-cpp-python==0.3.36" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 export FASTEMBED_CACHE_PATH="${FASTEMBED_CACHE_PATH:-$(pwd)/models}"
 .venv/bin/python scripts/fetch_models.py
 
@@ -17,5 +16,4 @@ npm run build --prefix frontend
 mkdir -p data
 export DEMO_MODE="${DEMO_MODE:-1}"
 export FASTEMBED_CACHE_PATH="${FASTEMBED_CACHE_PATH:-$(pwd)/models}"
-export UNDERSTAND_EACH_TURN="${UNDERSTAND_EACH_TURN:-1}"
 exec .venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 43123
