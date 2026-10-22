@@ -1,0 +1,121 @@
+# Swap this file (or set BUSINESS_CONFIG) to retarget the receptionist
+# at another shop: plumber, HVAC, towing, dental, or med spa.
+business:
+  name: Northline Plumbing & HVAC
+  agent_name: Riley
+  trade: Plumbing and HVAC
+  phone_display: "(512) 555-0142"
+  timezone: America/Chicago
+  city: Austin
+
+service_area:
+  cities:
+    - Austin
+    - Round Rock
+    - Cedar Park
+    - Pflugerville
+    - Georgetown
+  zips:
+    - "78701"
+    - "78702"
+    - "78703"
+    - "78704"
+    - "78705"
+    - "78745"
+    - "78748"
+    - "78751"
+    - "78758"
+    - "78613"
+    - "78664"
+    - "78660"
+    - "78626"
+
+hours:
+  monday: { open: "07:00", close: "18:00" }
+  tuesday: { open: "07:00", close: "18:00" }
+  wednesday: { open: "07:00", close: "18:00" }
+  thursday: { open: "07:00", close: "18:00" }
+  friday: { open: "07:00", close: "18:00" }
+  saturday: { open: "08:00", close: "14:00" }
+  sunday: null
+
+scheduling:
+  slot_minutes: 90
+  lead_minutes: 90
+  horizon_days: 12
+
+services:
+  - Drain cleaning
+  - Water heater repair and replacement
+  - Leak detection and repair
+  - Toilet and faucet repair
+  - Sewer line service
+  - AC repair
+  - Furnace and heating repair
+  - Emergency dispatch
+
+pricing:
+  diagnostic_fee_usd: 89
+  after_hours_fee_usd: 149
+  emergency_dispatch_usd: 179
+  rules:
+    - id: drain
+      label: Drain cleaning
+      keywords: [drain, clog, backing up, backed up, slow drain]
+      low_usd: 175
+      high_usd: 425
+    - id: water_heater
+      label: Water heater
+      keywords: [water heater, no hot water, hot water]
+      low_usd: 180
+      high_usd: 2800
+    - id: toilet
+      label: Toilet repair
+      keywords: [toilet]
+      low_usd: 150
+      high_usd: 480
+    - id: faucet
+      label: Faucet or fixture
+      keywords: [faucet, tap]
+      low_usd: 140
+      high_usd: 390
+    - id: disposal
+      label: Garbage disposal
+      keywords: [disposal]
+      low_usd: 160
+      high_usd: 420
+    - id: ac
+      label: AC repair
+      keywords: [ac, a/c, air condition, not cooling, no cool]
+      low_usd: 189
+      high_usd: 750
+    - id: heat
+      label: Heating repair
+      keywords: [furnace, no heat, not heating, heater]
+      low_usd: 189
+      high_usd: 900
+    - id: leak
+      label: Leak repair
+      keywords: [leak]
+      low_usd: 175
+      high_usd: 850
+    - id: sewer
+      label: Sewer line
+      keywords: [sewer, sewage]
+      low_usd: 250
+      high_usd: 2500
+
+escalation:
+  on_call_name: Miguel Santos
+  on_call_phone: "+15125550199"
+  keywords_note: Burst pipes, gas, carbon monoxide, sewage backup, active flooding, electrical sparking.
+
+crm:
+  # Leave blank to log payloads locally. Point this at n8n or GoHighLevel when you go live.
+  webhook_url: ""
+  provider_label: n8n / GoHighLevel
+
+voice:
+  # gather uses Twilio speech recognition. stream requires DEEPGRAM_API_KEY and ELEVENLABS_API_KEY.
+  mode: auto
+  gather_voice: Polly.Joanna

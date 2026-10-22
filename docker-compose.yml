@@ -1,0 +1,16 @@
+services:
+  receptionist:
+    build: .
+    ports:
+      - "43123:43123"
+    environment:
+      SEED_ON_START: "1"
+      DATABASE_PATH: /app/data/receptionist.db
+      STATIC_DIR: /app/frontend/dist
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:43123/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
