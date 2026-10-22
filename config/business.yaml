@@ -85,6 +85,31 @@ pricing:
       keywords: [disposal]
       low_usd: 160
       high_usd: 420
+    - id: caulk
+      label: Caulking
+      keywords: [caulk, caulking, recaulk]
+      low_usd: 125
+      high_usd: 380
+    - id: fireplace
+      label: Gas fireplace service
+      keywords: [fireplace, gas fireplace]
+      low_usd: 149
+      high_usd: 420
+    - id: shower_head
+      label: Shower head
+      keywords: [shower head, showerhead]
+      low_usd: 95
+      high_usd: 240
+    - id: dryer_gas
+      label: Dryer gas line
+      keywords: [dryer gas, gas dryer, dryer line, secadora]
+      low_usd: 160
+      high_usd: 480
+    - id: grill_gas
+      label: Gas grill line
+      keywords: [gas grill, grill line, grill gas, parrilla]
+      low_usd: 160
+      high_usd: 480
     - id: ac
       label: AC repair
       keywords: [ac, a/c, air condition, not cooling, no cool]

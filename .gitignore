@@ -5,6 +5,8 @@ __pycache__/
 node_modules/
 frontend/dist/
 data/
+!backend/app/agent/data/
+!backend/app/agent/data/**
 models/
 .env
 .DS_Store

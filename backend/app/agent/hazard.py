@@ -39,7 +39,11 @@ _PRESENT_VERB = re.compile(
     re.I,
 )
 _GAS_BILL = re.compile(r"\bgas\s+(?:bill|invoice|utility|company)\b", re.I)
-_GAS_APPLIANCE = re.compile(r"\bgas\s+(?:water heater|furnace|stove|range|dryer|fireplace)\b", re.I)
+_GAS_APPLIANCE = re.compile(
+    r"\bgas\s+(?:water heater|furnace|stove|range|dryer|fireplace|grill)\b|"
+    r"\b(?:dryer|grill|range|fireplace)\s+gas\b",
+    re.I,
+)
 _GAS_SIGNAL = re.compile(
     r"\b(smell|smells|smelling|odor|odour|leak|leaking|hiss|hissing|rotten|sulfur|sulphur|"
     r"stink\w*|reek\w*|whiff\w*|fumes?|"
@@ -265,6 +269,12 @@ _COMMERCIAL = re.compile(
     r"inspecc\w*|inspection|cotiz\w*|presupuesto)\b",
     re.I,
 )
+_PREVENTION = re.compile(
+    r"\b(prevent\w*|insulat\w*|winteriz\w*|before winter|ahead of (?:a |the )?winter|"
+    r"so (?:it|they|the pipes|pipes) (?:do not|don't|dont)|"
+    r"keep (?:them|it|the pipes|pipes) from)\b",
+    re.I,
+)
 _PRESENT_DANGER = re.compile(
     r"\b(won't stop|wont stop|will not stop|can't shut|cant shut|cannot shut|"
     r"gushing|spewing|jetting|blasting|erupting|cascading|geyser|scalding|"
@@ -290,7 +300,16 @@ _CATALOGUE = re.compile(
     r"\b((?:carbon monoxide|monoxido|co)\b.{0,16}\b(?:detector|alarm)s?|(?:detector|alarma)\b.{0,20}\b(?:monoxido|humo))\b.{0,40}"
     r"\b(instal\w*|reemplaz\w*|replac\w*|cambiar|comprar|buy|quote|install)\b|"
     r"\b(boiler|caldera)\b.{0,48}\b(check|service|maintenance|tune|inspect\w*|revision|revisar|mantenimiento|chequeo)\b|"
-    r"\b(check|service|maintenance|tune|inspect\w*|revision|revisar|mantenimiento|chequeo)\b.{0,48}\b(boiler|caldera)\b",
+    r"\b(check|service|maintenance|tune|inspect\w*|revision|revisar|mantenimiento|chequeo)\b.{0,48}\b(boiler|caldera)\b|"
+    r"\b(caulk\w*|recaulk\w*)\b|"
+    r"\b(?:gas\s+)?fireplace\b.{0,48}\b(clean\w*|service|annual|inspect\w*|maintenance|limpieza)\b|"
+    r"\b(clean\w*|service|annual|inspect\w*|maintenance|limpieza)\b.{0,48}\b(?:gas\s+)?fireplace\b|"
+    r"\b(shower\s*heads?|showerhead|regadera|cabezal de la ducha)\b|"
+    r"\b(dryer|secadora)\b.{0,40}\b(gas\s+(?:line|connection)|linea de gas)\b|"
+    r"\b(gas\s+(?:line|connection)|linea de gas)\b.{0,40}\b(dryer|secadora|grill|parrilla)\b|"
+    r"\b(grill|parrilla|barbecue|bbq)\b.{0,32}\b(gas\s+line|linea de gas)\b|"
+    r"\bflood\s+lights?\b|"
+    r"\bsparkling\s+water\b",
     re.I,
 )
 _APPLIANCE_BASIN = re.compile(
@@ -304,7 +323,7 @@ _LEAVING_APPLIANCE = re.compile(
 )
 _WATER_MOTION = re.compile(r"\b(water|agua|drip\w*|leak\w*|wet|gote\w*)\b", re.I)
 _ELEC_SURFACE = re.compile(
-    r"\b(fixture|outlet|socket|receptacle|wiring|electric\w*|light|lamp|luminaire)\b",
+    r"\b(fixture|outlet|socket|receptacle|wiring|electric\w*|light|lamp|luminaire|cord|breaker|panel)\b",
     re.I,
 )
 _FROM_WORD = re.compile(r"\b(from|out of|off of|through|de la|del|desde)\b", re.I)
@@ -388,6 +407,11 @@ def _commercial_without_danger(text: str) -> bool:
     return bool(_COMMERCIAL.search(text)) and not _PRESENT_DANGER.search(text)
 
 
+def _prevention_without_danger(text: str) -> bool:
+    """Insulating so a pipe does not burst is not a burst that is happening."""
+    return bool(_PREVENTION.search(text)) and not _PRESENT_DANGER.search(text)
+
+
 def _contained_appliance_water(text: str) -> bool:
     """Water sitting in an appliance basin. Water leaving the appliance is not this."""
     if not _APPLIANCE_BASIN.search(text):
@@ -423,6 +447,9 @@ def _compose_water_electric(text: str) -> bool:
         return False
     flickered = bool(re.search(r"\b(flicker\w*|spark\w*|shock\w*|arcing|shorting)\b", text))
     if flickered and _near(text, _WATER_MOTION, _ELEC_SURFACE, 64):
+        return True
+    touching = bool(re.search(r"\b(onto|into|against|touching|on top of)\b", text))
+    if touching and _near(text, _WATER_MOTION, _ELEC_SURFACE, 48):
         return True
     for device in _ELEC_SURFACE.finditer(text):
         if _negated_at(text, device.start()):
@@ -578,10 +605,10 @@ _PRESENT_CUE_WORD = re.compile(
     re.I,
 )
 _HAZARD_STEM = re.compile(
-    r"\b(smoke|smoking|spark\w*|crackle\w*|sizzl\w*|arcing|shock\w*|charr\w*|"
+    r"\b(smoke|smoking|sparks?|sparking|crackle\w*|sizzl\w*|arcing|shock\w*|charr\w*|"
     r"smell\w*|odor\w*|odour\w*|rotten eggs?|sulfur|sulphur|"
     r"dizzy|faint\w*|drows\w*|slurr\w*|confused|collapsed?|vomit\w*|"
-    r"burst\w*|sag\w*|flood\w*|overflow\w*|spraying|gushing|pouring|"
+    r"burst\w*|sag\w*|flood(?:ing|ed|s)?(?!\s+lights?)|overflow\w*|spraying|gushing|pouring|"
     r"alarm|flue|hose|cold to the touch|no heat|eggs?)\b",
     re.I,
 )
@@ -609,8 +636,9 @@ _CONTEXT_NOUN = re.compile(
     re.I,
 )
 _HAZARD_NOUN = re.compile(
-    r"\b(smell\w*|odor\w*|odour\w*|smoke|spark\w*|crackle\w*|sizzl\w*|shock\w*|"
-    r"alarm|dizzy|faint\w*|drows\w*|slurr\w*|vomit\w*|collapsed?|burst\w*|flood\w*|"
+    r"\b(smell\w*|odor\w*|odour\w*|smoke|sparks?|sparking|crackle\w*|sizzl\w*|shock\w*|"
+    r"alarm|dizzy|faint\w*|drows\w*|slurr\w*|vomit\w*|collapsed?|burst\w*|"
+    r"flood(?:ing|ed|s)?(?!\s+lights?)|"
     r"flames?|hiss\w*|charr\w*|overflow\w*)\b|"
     r"\bwater\s+(?:is\s+)?(?:moving|running|pouring|coming|spraying)\b",
     re.I,
@@ -684,7 +712,7 @@ def _active_context(text: str) -> str | None:
     active = [clause for clause in clauses if not _clause_away(clause)]
     if not active:
         return None
-    context = " ".join(active)
+    context = ". ".join(active)
     if any(_SYMPTOM.search(clause) or _HAZARD_STEM.search(clause) for clause in active):
         extra: list[str] = []
         for clause in clauses:
@@ -720,7 +748,7 @@ def mentions_hazard_noun(text: str) -> bool:
     A catalogue job such as a smoke-alarm replacement does not open it either.
     """
     folded = prepare(text)
-    if _catalogue_job(folded):
+    if _catalogue_job(folded) or _prevention_without_danger(folded):
         return False
     clauses = _split_turn(folded) or [folded]
     live = [clause for clause in clauses if not _clause_away(clause)]
@@ -1032,6 +1060,8 @@ def _water(clause: str, full: str | None = None) -> bool:
         return False
     if _commercial_without_danger(blob) and not _PRESENT_DANGER.search(blob):
         return bool(_steam_or_scald(clause))
+    if _prevention_without_danger(blob) or _prevention_without_danger(clause):
+        return False
     foreign = _WATER_I18N.search(clause)
     if foreign and not _negated_at(clause, foreign.start()):
         return True
@@ -1305,6 +1335,8 @@ def _building_water(text: str) -> tuple[str, str] | None:
     if _contained_appliance_water(text):
         return None
     if _commercial_without_danger(text) and not _PRESENT_DANGER.search(text):
+        return None
+    if _prevention_without_danger(text):
         return None
     indoor = bool(_PLACE.search(text))
     if re.search(r"\b(raining|rainstorm|sprinkler)\b", text) and indoor:
@@ -1799,7 +1831,7 @@ def _live_force(text: str) -> bool:
     """Burst or flood inside a price or insurance question is not a live force."""
     if not _WATER_FORCE.search(text):
         return False
-    if _commercial_without_danger(text) and not _PRESENT_DANGER.search(text):
+    if (_commercial_without_danger(text) or _prevention_without_danger(text)) and not _PRESENT_DANGER.search(text):
         return False
     return True
 
@@ -1852,13 +1884,12 @@ def _situational_hazard(text: str) -> tuple[str, str] | None:
     return None
 
 
-def classify_emergency(text: str) -> tuple[str, str | None]:
-    """Return ('definite'|'ask'|'advice'|'none', label).
+def rules_screen(text: str) -> tuple[str, str | None]:
+    """Hand rules. 'definite' transfers. 'ask' is the safety question.
 
-    'definite' transfers. 'ask' is the safety question. 'advice' is a chirping
-    detector battery. A finished repair stays routine. A negation has to sit
-    on the hazard. If the embedder cannot load, an uncertain turn asks rather
-    than pretending there is no hazard.
+    'advice' is a chirping detector battery. A finished repair stays routine.
+    A negation has to sit on the hazard. If the embedder cannot load, an
+    uncertain turn asks rather than pretending there is no hazard.
     """
     original = text
     full = prepare(text)
@@ -1955,6 +1986,8 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         or (_commercial_without_danger(folded) and not _gas_anywhere(folded) and not _fire_or_smoke(folded))
     ) and not _soft_electrical(folded) and not _damp_mark(folded):
         return "none", None
+    if _drip_near_power(folded):
+        return "ask", "Uncertain hazard"
     if _mild_water(folded) and not _GAS_SIGNAL.search(folded) and not _CO_HARD.search(folded):
         if not _unnegated(folded, _ELECTRICAL):
             return "none", None
@@ -2032,6 +2065,17 @@ def _extreme_temperature(text: str) -> bool:
         if value <= 50 or value >= 90:
             return True
     return False
+
+
+def _drip_near_power(text: str) -> bool:
+    """A drip headed toward power is a question, not a booking and not a page."""
+    if not re.search(r"\b(drip\w*|leak\w*|weeping|seeping)\b", text):
+        return False
+    if not re.search(r"\b(breaker|panel|outlet|socket|electrical)\b", text):
+        return False
+    if _PRESENT_DANGER.search(text) or re.search(r"\b(sparks?|sparking|smoke|smoking)\b", text):
+        return False
+    return True
 
 
 def _mild_water(text: str) -> bool:
@@ -2134,6 +2178,24 @@ def _stricter(left: tuple[str, str | None], right: tuple[str, str | None]) -> tu
     if _RANK.get(right[0], 0) > _RANK.get(left[0], 0):
         return right
     return left
+
+
+def classify_emergency(text: str) -> tuple[str, str | None]:
+    """Learned head first. Hand rules may only raise the level.
+
+    Advice is a rule label the head does not predict. A head 'ask' does not
+    replace a chirping-battery advice, and a head 'definite' still pages.
+    If the head cannot run, the rules stand alone.
+    """
+    rules = rules_screen(text)
+    from app.agent.hazard_head import head_level
+
+    head = head_level(text)
+    if head is None:
+        return rules
+    if rules[0] == "advice" and head[0] != "definite":
+        return rules
+    return _stricter(rules, head)
 
 
 def _warm_semantic() -> None:

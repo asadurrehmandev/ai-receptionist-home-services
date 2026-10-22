@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import time
 from pathlib import Path
@@ -69,11 +70,18 @@ class BusinessConfig:
         return ZoneInfo(self.timezone)
 
     def price_for(self, text: str) -> PriceRule | None:
+        """Longest keyword wins, and a keyword has to be its own word.
+
+        `ac` must not match inside fireplace or space.
+        """
         haystack = (text or "").lower()
+        best: tuple[int, PriceRule] | None = None
         for rule in self.price_rules:
-            if any(keyword in haystack for keyword in rule.keywords):
-                return rule
-        return None
+            for keyword in rule.keywords:
+                if re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", haystack):
+                    if best is None or len(keyword) > best[0]:
+                        best = (len(keyword), rule)
+        return None if best is None else best[1]
 
     def public_dict(self) -> dict:
         hours = {}

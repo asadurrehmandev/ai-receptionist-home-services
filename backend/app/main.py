@@ -299,7 +299,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 logger.exception("Understander turn failed")
                 result = {
-                    "say": "I couldn't check that safely. Is anyone in danger right now, or would you like a person to call you back?",
+                    "say": "I couldn't check that safely. Is anyone in danger or is there gas, smoke, sparks or water near electricity right now?",
                     "outcome": None,
                     "language": "en",
                 }

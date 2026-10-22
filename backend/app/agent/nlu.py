@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from app.agent.hazard import classify_emergency as classify_hazard
-from app.agent.hazard import prepare, service_catalogue
+from app.agent.hazard import _contained_appliance_water, prepare, service_catalogue
 
 SPAM_PATTERNS: tuple[str, ...] = (
     r"\bseo\b",
@@ -96,6 +96,13 @@ ISSUE_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("not cooling", "air condition", "a/c", " ac ", "blowing warm"), "AC repair"),
     (("furnace", "no heat", "not heating"), "Heating repair"),
     (("sewer", "sewage"), "Sewer line"),
+    (("caulk", "caulking", "recaulk"), "Caulking"),
+    (("fireplace",), "Gas fireplace service"),
+    (("shower head", "showerhead"), "Shower head"),
+    (("dryer gas", "gas dryer", "secadora"), "Dryer gas line"),
+    (("gas grill", "grill line", "grill gas", "parrilla"), "Gas grill line"),
+    (("sparkling water",), "Water filter"),
+    (("flood light", "flood lights"), "Lighting"),
     (("leak",), "Leak"),
     (("spigot", "hose bib", "hose bibb", "sillcock", "outdoor faucet"), "Outdoor faucet"),
     (("water pressure", "low pressure", "shower pressure"), "Water pressure"),
@@ -357,7 +364,7 @@ def detect_intent(text: str) -> str:
     spanish = _spanish_intent(text)
     if spanish:
         return spanish
-    if service_catalogue(text):
+    if service_catalogue(text) or _contained_appliance_water(prepare(text)):
         return "new_job"
     screened = prepare(text)
     if SERVICE_PROBLEM.search(norm) or SERVICE_PROBLEM.search(screened) or re.search(
@@ -368,13 +375,20 @@ def detect_intent(text: str) -> str:
         r"sump|exhaust fan|gfci|gfi|flood sensors?|softener|check-?up|checkup|replac\w*|"
         r"heat[- ]?pump|annual service|yearly service|yearly check|annual check|maintenance visit|"
         r"landlord|rental unit|inspection|steam shower|shower valve|bath fan|bathroom fan|"
-        r"recessed|can lights|smoke alarm|smoke detector|boiler|carbon monoxide detector)\b",
+        r"recessed|can lights|smoke alarm|smoke detector|boiler|carbon monoxide detector|"
+        r"caulk\w*|fireplace|shower\s*heads?|showerhead|dryer gas|gas dryer|"
+        r"gas grill|grill line|sparkling water|flood lights?)\b",
         norm,
     ) or re.search(
         r"\b(steam shower|shower valve|bath fan|bathroom fan|recessed|can lights|"
         r"smoke alarm|smoke detector|boiler|carbon monoxide detector|co detector)\b",
         screened,
     ):
+        return "new_job"
+    from app.agent.hazard_head import route_service
+
+    routed = route_service(text)
+    if routed is not None and routed[0] not in {"other", "emergency"} and routed[1] >= 0.42:
         return "new_job"
     return "unclear"
 
@@ -832,7 +846,9 @@ def extract_issue(text: str) -> str | None:
         for keyword in keywords:
             if keyword in padded:
                 return label
-    return None
+    from app.agent.hazard_head import route_issue
+
+    return route_issue(text)
 
 
 def spelled_word(text: str) -> str | None:
@@ -953,7 +969,7 @@ def _person_name_rejected(candidate: str, issue: str | None = None) -> bool:
 
 def extract_introduced_name(text: str) -> str | None:
     match = re.search(
-        r"\b(?:my name is|this is|i am|i'm|im|it is|it's)\s+([^\W\d_](?:[^\W\d_]|['-])*(?:\s+[^\W\d_](?:[^\W\d_]|['-])*){0,3})",
+        r"\b(?:my name is|this is|i am|i'm|im|it is|it's|me llamo|mi nombre es|soy)\s+([^\W\d_](?:[^\W\d_]|['’-])*(?:\s+[^\W\d_](?:[^\W\d_]|['’-])*){0,3})",
         text,
         re.I,
     )
@@ -981,7 +997,20 @@ def extract_introduced_name(text: str) -> str | None:
 
 
 _MARKUP_TAG = re.compile(r"<[^>]*>", re.I)
-_TEMPLATE_NAME = re.compile(r"\{\{|\}\}|\$\{|\$\(|#\{|<%|%>|\bjndi\b|ldap://", re.I)
+_TEMPLATE_NAME = re.compile(
+    r"\{\{|\}\}|\$\{|\$\(|#\{|<%|%>|%\{|%\(|%[A-Za-z_][A-Za-z0-9_]*%|\bjndi\b|ldap://",
+    re.I,
+)
+_CODEISH = re.compile(
+    r"[{}<>]|--|/\*|\*/|<\s*/?\s*script|fetch\s*\(|"
+    r"\b(?:drop\s+table|union\s+select|jndi)\b",
+    re.I,
+)
+_NAME_INSTRUCTION = re.compile(
+    r"\b(?:ignore (?:the |all |any )?(?:above|previous|prior)|"
+    r"you are now|system prompt|(?:i am|i'm) the owner)\b",
+    re.I,
+)
 _MARKUP_TOKEN = {
     "script",
     "alert",
@@ -1008,16 +1037,33 @@ def _markup_tokens(text: str) -> bool:
     return bool(tokens) and all(part in _MARKUP_TOKEN for part in tokens)
 
 
-def _not_a_person_name(text: str) -> bool:
-    """A phone, ZIP, street, markup fragment, or template string is not a caller's name."""
-    if _TEMPLATE_NAME.search(text or ""):
+def _leading_person(text: str) -> bool:
+    """A person named before the junk, not a token salvaged out of the junk."""
+    if extract_introduced_name(text or ""):
         return True
-    raw = _without_markup(text or "")
+    if _clean_pair(text or ""):
+        return True
+    tokens = re.findall(r"[^\W\d_]+(?:['’-][^\W\d_]+)?", text or "")
+    kept = [token for token in tokens if token.lower() not in NAME_STOP and len(token) > 1]
+    return 2 <= len(kept) <= 3
+
+
+def _not_a_person_name(text: str) -> bool:
+    """A phone, ZIP, street, markup fragment, template, or code string is not a caller's name."""
+    raw_text = text or ""
+    if _TEMPLATE_NAME.search(raw_text) or _CODEISH.search(raw_text):
+        head = _CODEISH.split(raw_text, maxsplit=1)[0]
+        head = _TEMPLATE_NAME.split(head, maxsplit=1)[0]
+        return not _leading_person(head)
+    if _NAME_INSTRUCTION.search(raw_text):
+        head = _NAME_INSTRUCTION.split(raw_text, maxsplit=1)[0]
+        return not _leading_person(head)
+    raw = _without_markup(raw_text)
     if not raw.strip():
         return True
     if extract_street(raw) or extract_phone(raw)[0] or extract_zip(raw):
         return True
-    if _markup_tokens(text or ""):
+    if _markup_tokens(raw_text):
         return True
     return False
 
@@ -1055,8 +1101,10 @@ def guess_bare_name(text: str, framed: bool = False) -> str | None:
 
 
 def fallback_name(text: str) -> str:
-    """A last-resort name. Empty when the utterance is a phone, ZIP, address, or markup."""
+    """A last-resort name. Empty when the utterance is a phone, ZIP, address, markup, or code."""
     if _not_a_person_name(text):
+        return ""
+    if _CODEISH.search(text or "") or _TEMPLATE_NAME.search(text or "") or _MARKUP_TAG.search(text or ""):
         return ""
     cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in _without_markup(text or ""))
     tokens = [

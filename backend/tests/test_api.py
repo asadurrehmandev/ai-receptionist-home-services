@@ -51,8 +51,8 @@ def test_health_reports_rule_brain(client):
     body = response.json()
     assert body["ok"] is True
     assert body["brain"] == "rules"
-    assert body["classifier"] == "keyword+nli"
-    assert body["hazard_screen"] == "rules+minilm+nli"
+    assert body["classifier"] == "minilm-head"
+    assert body["hazard_screen"] == "head+rules+minilm+nli"
     assert body["understander"] == "off"
     assert body["voice_ready"] is False
     assert "not a live phone" in body["voice_block_reason"]

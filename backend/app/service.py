@@ -86,7 +86,16 @@ class ReceptionService:
                 state.caller_id = caller_id_digits(caller_id)
             # Long identical utterances are Twilio retries. Short answers such as
             # "yes" are allowed again once the phase has moved on.
-            if text and len(text.split()) >= 4 and state.last_caller_text == text and state.last_reply:
+            retrying_rejected_name = (
+                state.phase == "collect_name" and not state.name and state.name_rejects > 0
+            )
+            if (
+                text
+                and len(text.split()) >= 4
+                and state.last_caller_text == text
+                and state.last_reply
+                and not retrying_rejected_name
+            ):
                 cached = self._public(call_id, state.last_reply, type("R", (), {"latency_ms": 0.0, "events": []})(), state)
                 cached["duplicate"] = True
                 cached["engine_ms"] = 0.0

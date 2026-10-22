@@ -112,10 +112,23 @@ _BATTERY_ES = (
     "Si la alarma de monóxido está sonando, salga de la casa y llame al 911. "
     "Un solo pitido suele ser la pila, y puedo agendar una visita."
 )
-_ASK_EN = "Is anyone in danger right now? I can connect you to the on-call technician."
-_ASK_ES = "¿Hay alguien en peligro ahora mismo? Puedo comunicarlo con el técnico de guardia."
-_OFFER_EN = "Is anyone in danger right now, or would you like a person to call you back?"
-_OFFER_ES = "¿Hay alguien en peligro ahora, o prefiere que una persona le devuelva la llamada?"
+_ASK_EN = "Is anyone in danger or is there gas, smoke, sparks or water near electricity right now?"
+_ASK_ES = "¿Hay alguien en peligro o hay gas, humo, chispas o agua cerca de la electricidad ahora mismo?"
+_OFFER_EN = _ASK_EN
+_OFFER_ES = _ASK_ES
+
+
+def _instruction_with_slot(text: str) -> bool:
+    """A name or address plus a jailbreak is the slot, not a hazard question."""
+    from app.agent.hazard import _instruction_only, prepare
+
+    if not _instruction_only(prepare(text)):
+        return False
+    if guess_bare_name(text, framed=True):
+        return True
+    if extract_street(text) or extract_phone(text)[0]:
+        return True
+    return False
 
 
 def _looks_like_verification(text: str) -> bool:
@@ -190,55 +203,64 @@ class Engine:
         if state.hazard:
             return self._escalate(state, started, state.hazard)
 
-        screening = state.phase not in FIELD_PHASES
-        if screening:
-            level, emergency = assess_caller_turn(raw)
-        else:
-            raw = strip_field_instructions(raw)
+        spoken = raw
+        level, emergency = assess_caller_turn(spoken)
+        if _instruction_with_slot(spoken) and level == "ask":
             level, emergency = "none", None
-        if screening and level == "ask" and emergency == "Hazard model unavailable":
+        if level == "ask" and emergency == "Hazard model unavailable":
             if state.degraded_asked:
                 level, emergency = "none", None
             else:
                 state.degraded_asked = True
-        if screening and level == "definite" and emergency:
-            self._fill(state, raw)
+        if level == "definite" and emergency:
+            prior_name = state.name
+            self._fill(state, spoken)
+            if state.phase in {"collect_name", "quote_decision"} or state.asked_field == "name":
+                state.name = prior_name
             state.intent = "emergency"
             state.issue = emergency
             state.hazard = emergency
             return self._escalate(state, started, emergency)
-        if screening and level == "ask":
-            self._fill(state, raw)
+        if level == "ask":
+            prior_name = state.name
+            self._fill(state, spoken)
+            if state.phase in {"collect_name", "quote_decision"} or state.asked_field == "name":
+                state.name = prior_name
             state.phase = "hazard_check"
             state.issue = state.issue or emergency
-            if emergency == "Understander unavailable":
-                return self._finish(state, self._line(state, _OFFER_EN, _OFFER_ES), started)
             return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
+        from app.agent.hazard_head import confident_routine
+
         if (
-            screening
-            and level == "none"
+            level == "none"
             and not understand_enabled()
-            and mentions_hazard_noun(raw)
-            and not plain_job_text(raw)
-            and not framed_entirely_away(raw)
+            and mentions_hazard_noun(spoken)
+            and not plain_job_text(spoken)
+            and not framed_entirely_away(spoken)
+            and not confident_routine(spoken)
             and state.phase not in {"hazard_check", "unclear_handoff", "closed"}
         ):
-            self._fill(state, raw)
+            self._fill(state, spoken)
             state.phase = "hazard_check"
             state.issue = state.issue or "Possible hazard"
             return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
-        if screening and level == "advice":
-            self._fill(state, raw)
+        if level == "advice":
+            self._fill(state, spoken)
             state.issue = state.issue or "CO detector battery"
             if state.language == "other":
                 return self._language_handoff(state, started, prefix=self._line(state, _BATTERY_EN, _BATTERY_ES))
             return self._finish(state, self._line(state, _BATTERY_EN, _BATTERY_ES), started)
 
-        if screening and state.language == "other":
+        if state.phase in FIELD_PHASES:
+            stripped = strip_field_instructions(spoken)
+            if stripped:
+                raw = stripped
+
+        if state.language == "other" and state.phase not in FIELD_PHASES:
             self._fill(state, raw)
             return self._language_handoff(state, started)
 
-        if screening and wants_human(raw):
+        if state.phase not in FIELD_PHASES and wants_human(raw):
             self._fill(state, raw)
             state.intent = state.intent or "handoff"
             return self._escalate(state, started, "Caller requested a person")
@@ -280,11 +302,7 @@ class Engine:
                 state.unclear_count += 1
                 if state.unclear_count > 2:
                     state.phase = "unclear_handoff"
-                    return self._finish(
-                        state,
-                        "Is anyone in danger, or would you like a person to call you back?",
-                        started,
-                    )
+                    return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
                 return self._finish(
                     state,
                     "I can help with a new repair, an estimate, an existing appointment, or an emergency. What's going on?",
@@ -311,19 +329,7 @@ class Engine:
                     started,
                 )
             if state.phase == "collect_name" and not state.name:
-                state.name_rejects += 1
-                recovered = fallback_name(raw) if state.name_rejects >= 2 else ""
-                if recovered:
-                    state.name = recovered
-                    state.name_confidence = "low"
-                    return self._continue_intake(state, raw, started)
-                if state.name_rejects >= 2:
-                    return self._name_handoff(state, started)
-                return self._finish(
-                    state,
-                    self._line(state, "Sorry, I missed the name. Who am I speaking with?", "Perdón, no escuché el nombre. ¿Con quién hablo?"),
-                    started,
-                )
+                return self._reject_name(state, raw, started)
             if state.phase == "collect_phone" and not state.phone:
                 return self._finish(
                     state,
@@ -362,6 +368,10 @@ class Engine:
                 return self._decline_quote(state, started)
             if is_yes(raw) or selection_index(raw) is not None or state.name or state.phone:
                 return self._continue_intake(state, raw, started)
+            from app.agent.nlu import _not_a_person_name
+
+            if _not_a_person_name(raw):
+                return self._reject_name(state, raw, started)
             return self._finish(state, self._quote_line(state) + " Should I book the diagnostic?", started)
 
         if state.phase == "offer":
@@ -907,6 +917,26 @@ class Engine:
     def _unclear_handoff(self, state: SessionState, raw: str, started: float) -> TurnResult:
         """The answer to the unclear-path safety question. It does not ask again."""
         return self._safety_answer(state, raw, started, on_clear="callback")
+
+    def _reject_name(self, state: SessionState, raw: str, started: float) -> TurnResult:
+        """Two failed names on any path that is collecting a name become a callback."""
+        state.name_rejects += 1
+        recovered = fallback_name(raw) if state.name_rejects >= 2 else ""
+        if recovered:
+            state.name = recovered
+            state.name_confidence = "low"
+            return self._continue_intake(state, raw, started)
+        if state.name_rejects >= 2:
+            return self._name_handoff(state, started)
+        return self._finish(
+            state,
+            self._line(
+                state,
+                "Sorry, I missed the name. Who am I speaking with?",
+                "Perdón, no escuché el nombre. ¿Con quién hablo?",
+            ),
+            started,
+        )
 
     def _name_handoff(self, state: SessionState, started: float) -> TurnResult:
         state.outcome = "callback"
