@@ -65,7 +65,8 @@ ABANDON = re.compile(
 )
 
 YES = re.compile(
-    r"\b(yes|yeah|yep|yup|sure|okay|ok|please do|book it|lock it|confirm|that works|do it|go ahead|sounds good)\b",
+    r"\b(yes|yeah|yep|yup|sure|okay|ok|please do|book it|lock it|confirm|that works|do it|go ahead|sounds good|"
+    r"sí|si|claro|confirmo|de acuerdo)\b",
     re.I,
 )
 CLEAN_YES_BLOCK = re.compile(r"\b(wait|which|hold on|actually|but|maybe|or)\b|\?", re.I)
@@ -162,7 +163,16 @@ SPANISH_HINTS = (
     "hola",
     "gracias",
     "por favor",
+    "necesito",
+    "quiero",
     "tengo",
+    "reparar",
+    "arreglar",
+    "calentador",
+    "urgente",
+    "cotizacion",
+    "presupuesto",
+    "mantenimiento",
     "fuga",
     "agua",
     "fregadero",
@@ -173,16 +183,40 @@ SPANISH_HINTS = (
     "estufa",
     "cita",
     "calefaccion",
-    "baño",
     "bano",
     "inundando",
     "inundada",
+    "inundacion",
     "chispas",
     "alcantarilla",
     "casa",
     "fuerte",
-    "hay",
+    "mareado",
+    "mareada",
+    "mareo",
+    "sonando",
+    "monoxido",
+    "sotano",
+    "tuberia",
+    "desague",
+    "llave",
+    "grifo",
+    "tecnico",
+    "visita",
+    "apellido",
+    "direccion",
+    "telefono",
 )
+
+
+def _fold_latin(text: str) -> str:
+    import unicodedata
+
+    pieces: list[str] = []
+    for char in text or "":
+        decomposed = unicodedata.normalize("NFKD", char)
+        pieces.append("".join(item for item in decomposed if not unicodedata.combining(item)))
+    return "".join(pieces).lower()
 
 
 def normalize(text: str) -> str:
@@ -217,9 +251,13 @@ def is_spam(text: str) -> bool:
 
 
 def looks_spanish(text: str) -> bool:
-    norm = normalize(text)
+    norm = _fold_latin(normalize(text))
     hits = [hint for hint in SPANISH_HINTS if re.search(rf"\b{re.escape(hint)}\b", norm)]
-    return len(hits) >= 2 or "hola" in hits or "huele" in hits
+    if "hola" in hits or "huele" in hits:
+        return True
+    if re.search(r"[¿¡ñ]", text or ""):
+        return len(hits) >= 1
+    return len(hits) >= 2
 
 
 _OTHER_SCRIPT = re.compile(
@@ -243,8 +281,37 @@ _OTHER_WORDS = (
 )
 
 
+_ES_QUOTE = re.compile(
+    r"\b(cotizacion|presupuesto|cuanto cuesta|cuanto sale|cuanto cobran)\b",
+    re.I,
+)
+_ES_EXISTING = re.compile(
+    r"\b(reprogram\w*|cancelar (?:mi |la )?(?:cita|visita)|cambiar (?:mi |la )?cita|mover (?:mi |la )?cita)\b",
+    re.I,
+)
+_ES_JOB = re.compile(
+    r"\b(repar\w*|arregl\w*|calentador|fuga|gote\w*|desague|drenaje|tuberia|"
+    r"mantenimiento|sin agua caliente|no calienta|no enfria|inodoro|llave|grifo|"
+    r"aire acondicionado|climatizacion|calefaccion|fuga de agua)\b",
+    re.I,
+)
+
+
+def _spanish_intent(text: str) -> str | None:
+    folded = _fold_latin(normalize(text))
+    if not looks_spanish(text):
+        return None
+    if _ES_EXISTING.search(folded):
+        return "existing_booking"
+    if _ES_QUOTE.search(folded):
+        return "quote"
+    if _ES_JOB.search(folded):
+        return "new_job"
+    return None
+
+
 def detect_language(text: str) -> str:
-    """Return en, es, or other. Booking is English only."""
+    """Return en, es, or other. Spanish books. Other languages get a callback."""
     if looks_spanish(text):
         return "es"
     if _OTHER_SCRIPT.search(text or ""):
@@ -277,6 +344,9 @@ def detect_intent(text: str) -> str:
         return "existing_booking"
     if QUOTE.search(norm) or is_haggle(norm):
         return "quote"
+    spanish = _spanish_intent(text)
+    if spanish:
+        return spanish
     if SERVICE_PROBLEM.search(norm) or re.search(
         r"\b(need someone|come out|schedule|book a|repair|broken|problem|technician|inspect\w*|checked|check my|check it|"
         r"install\w*|hook\s?up|hookup|thermostat|no power|dead outlet|outlet (?:is )?dead|puddle|dripp\w*|"
@@ -892,8 +962,48 @@ def extract_introduced_name(text: str) -> str | None:
     return candidate
 
 
+_MARKUP_TAG = re.compile(r"<[^>]*>", re.I)
+_MARKUP_TOKEN = {
+    "script",
+    "alert",
+    "javascript",
+    "onerror",
+    "onclick",
+    "iframe",
+    "svg",
+    "img",
+    "src",
+    "href",
+}
+
+
+def _without_markup(text: str) -> str:
+    return _MARKUP_TAG.sub(" ", text or "")
+
+
+def _markup_tokens(text: str) -> bool:
+    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in _without_markup(text))
+    tokens = [part.lower() for part in cleaned.split() if part]
+    return bool(tokens) and all(part in _MARKUP_TOKEN for part in tokens)
+
+
+def _not_a_person_name(text: str) -> bool:
+    """A phone, ZIP, street, or markup fragment is not a caller's name."""
+    raw = _without_markup(text or "")
+    if not raw.strip():
+        return True
+    if extract_street(raw) or extract_phone(raw)[0] or extract_zip(raw):
+        return True
+    if _markup_tokens(text or ""):
+        return True
+    return False
+
+
 def guess_bare_name(text: str, framed: bool = False) -> str | None:
     """A name frame, or the answer to the name question, may use a brand or a street word."""
+    if _not_a_person_name(text):
+        return None
+    text = _without_markup(text)
     introduced = extract_introduced_name(text)
     if introduced and _name_allowed(introduced, framed=True):
         return introduced
@@ -922,13 +1032,26 @@ def guess_bare_name(text: str, framed: bool = False) -> str | None:
 
 
 def fallback_name(text: str) -> str:
-    """Last resort after two rejected name answers. Never ask a third time."""
-    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in (text or ""))
-    tokens = [part for part in cleaned.split() if part and part.lower() not in NAME_STOP and len(part) > 1]
-    if tokens:
-        return " ".join(_proper_token(part) for part in tokens[:3])
-    raw = " ".join((text or "").split())
-    return raw[:40] or "Caller"
+    """A last-resort name. Empty when the utterance is a phone, ZIP, address, or markup."""
+    if _not_a_person_name(text):
+        return ""
+    cleaned = "".join(char if (char.isalpha() or char in " '-") else " " for char in _without_markup(text or ""))
+    tokens = [
+        part
+        for part in cleaned.split()
+        if part and part.lower() not in NAME_STOP and part.lower() not in _MARKUP_TOKEN and len(part) > 1
+    ]
+    if len(tokens) < 2:
+        raw = " ".join(_without_markup(text or "").split())
+        if raw and not any(char.isdigit() for char in raw):
+            letters = "".join(char if char.isalpha() or char in " '-" else " " for char in raw).strip()
+            if not letters:
+                return "Caller"
+        return ""
+    candidate = " ".join(_proper_token(part) for part in tokens[:3])
+    if not _plausible_name(candidate) or _person_name_rejected(candidate):
+        return ""
+    return candidate
 
 
 _FIELD_INSTRUCTION = re.compile(
@@ -998,8 +1121,12 @@ def caller_id_digits(value: str | None) -> str | None:
 
 
 def selection_index(text: str) -> int | None:
-    norm = normalize(text)
-    if re.search(r"\b(earliest|soonest|first one|first available|the first|asap|as soon as possible)\b", norm):
+    norm = _fold_latin(normalize(text))
+    if re.search(
+        r"\b(earliest|soonest|first one|first available|the first|asap|as soon as possible|"
+        r"lo antes posible|cuanto antes|la primera|el primero)\b",
+        norm,
+    ):
         return 0
     if re.search(r"\b(second|2nd|the other one|middle one)\b", norm):
         return 1

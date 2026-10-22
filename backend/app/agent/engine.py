@@ -230,11 +230,11 @@ class Engine:
         if screening and level == "advice":
             self._fill(state, raw)
             state.issue = state.issue or "CO detector battery"
-            if state.language != "en":
+            if state.language == "other":
                 return self._language_handoff(state, started, prefix=self._line(state, _BATTERY_EN, _BATTERY_ES))
             return self._finish(state, self._line(state, _BATTERY_EN, _BATTERY_ES), started)
 
-        if screening and state.language != "en":
+        if screening and state.language == "other":
             self._fill(state, raw)
             return self._language_handoff(state, started)
 
@@ -312,8 +312,9 @@ class Engine:
                 )
             if state.phase == "collect_name" and not state.name:
                 state.name_rejects += 1
-                if state.name_rejects >= 2:
-                    state.name = fallback_name(raw)
+                recovered = fallback_name(raw) if state.name_rejects >= 2 else ""
+                if recovered:
+                    state.name = recovered
                     state.name_confidence = "low"
                     return self._continue_intake(state, raw, started)
                 return self._finish(
@@ -351,6 +352,10 @@ class Engine:
 
         if state.phase == "quote_decision":
             self._fill(state, raw)
+            if not state.name:
+                named = guess_bare_name(raw, framed=True)
+                if named:
+                    state.name = named
             if is_no(raw) and not is_yes(raw) and selection_index(raw) is None:
                 return self._decline_quote(state, started)
             if is_yes(raw) or selection_index(raw) is not None or state.name or state.phone:
@@ -882,7 +887,7 @@ class Engine:
         if decision == "callback" or on_clear == "callback":
             return self._office_callback(state, started)
         state.degraded_asked = True
-        if state.language != "en":
+        if state.language == "other":
             return self._language_handoff(state, started)
         state.phase = "discover"
         return self._continue_intake(state, raw, started)

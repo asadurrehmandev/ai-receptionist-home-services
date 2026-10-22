@@ -58,7 +58,7 @@ def test_a_yes_still_pages_when_a_model_says_they_are_safe():
 def test_a_heat_pump_check_continues_and_field_instructions_do_not_page(tmp_path, monkeypatch):
     monkeypatch.setenv("INSTRUCT_MODEL_PATH", str(tmp_path / "broken.gguf"))
     (tmp_path / "broken.gguf").write_bytes(b"not-a-model")
-    assert classifier_mode() == "keyword"
+    assert classifier_mode() == "keyword+nli"
     assert understand_ready() is False
     engine = _engine()
     state = SessionState()

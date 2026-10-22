@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.hazard_nli import nli_ready
 from app.agent.hazard_semantic import semantic_ready
-from app.agent.understand import classifier_mode, understand_ready, understander_name
+from app.agent.understand import classifier_mode, hazard_screen_mode, understand_ready, understander_name
 from app.config_loader import load_business
 from app.integrations import deliver_webhook
 from app.llm.keys import redacted
@@ -124,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "openai-tools" if settings.env_llm_provider == "openai" else "rules"
             ),
             "classifier": classifier_mode(),
+            "hazard_screen": hazard_screen_mode(),
             "demo_mode": settings.demo_mode,
             "model": (
                 settings.anthropic_model
@@ -134,8 +135,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             "reply_mode": "live" if settings.env_llm_provider else "demo",
             "llm_provider": settings.env_llm_provider,
-            "voice_ready": _voice_block_reason() is None,
-            "voice_block_reason": _voice_block_reason(),
+            "voice_ready": _voice_stack_reason() is None,
+            "voice_block_reason": _voice_stack_reason(),
             "semantic_ready": semantic,
             "nli_ready": nli,
             "understand_ready": understand_ready(),
@@ -231,6 +232,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Call not found") from exc
+
+    @app.post("/api/demo/calls/{call_id}/discard")
+    def discard_demo(call_id: str):
+        _require_demo()
+        return {"ok": service.discard_open(call_id)}
 
     @app.post("/api/admin/reset")
     def reset_demo():
@@ -459,6 +465,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not settings.twilio_auth_token:
             return "Voice will not start without TWILIO_AUTH_TOKEN when DEMO_MODE=0."
         return None
+
+    def _voice_stack_reason() -> str | None:
+        """Honest readiness. Demo mode still accepts local webhooks without a live phone."""
+        missing = []
+        if not settings.twilio_auth_token:
+            missing.append("TWILIO_AUTH_TOKEN")
+        if not settings.deepgram_api_key:
+            missing.append("DEEPGRAM_API_KEY")
+        if not settings.elevenlabs_api_key:
+            missing.append("ELEVENLABS_API_KEY")
+        if not missing:
+            return None
+        if not settings.demo_mode:
+            if not settings.twilio_auth_token:
+                return "Voice will not start without TWILIO_AUTH_TOKEN when DEMO_MODE=0."
+            return "Voice is not ready. Missing " + ", ".join(missing) + "."
+        return "Demo mode is not a live phone. Missing " + ", ".join(missing) + "."
 
     def _authorized(request: Request, form: dict[str, str]) -> bool:
         return signature_is_valid(

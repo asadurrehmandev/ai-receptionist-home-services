@@ -26,7 +26,36 @@ export function CallsTable({
 
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
-      <div className="overflow-x-auto">
+      <ul className="sm:hidden">
+        {calls.map((call) => {
+          const live = isLiveCall(call);
+          const who = call.caller_name || call.caller_phone || "caller";
+          return (
+            <li key={call.id} className="border-b border-border last:border-0">
+              <button
+                type="button"
+                className="flex w-full items-start justify-between gap-3 px-3 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                onClick={() => navigate(`/calls/${call.id}`)}
+                aria-label={`Open call from ${who}`}
+              >
+                <span className="min-w-0">
+                  <CallerName name={call.caller_name} phone={call.caller_phone} />
+                  <span className="mt-0.5 block truncate text-sm text-muted-foreground">{issueText(call)}</span>
+                  <span className="mt-0.5 block text-xs tabular-nums text-subtle">{formatWhen(call.started_at, false)}</span>
+                </span>
+                <span className="shrink-0">
+                  {live ? (
+                    <Badge tone="in_progress">In progress</Badge>
+                  ) : (
+                    <Badge tone={call.outcome || "open"}>{call.outcome || "open"}</Badge>
+                  )}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[680px] border-collapse text-left text-sm">
           <thead className="bg-surface text-xs font-medium text-muted-foreground">
             <tr className="h-9 border-b border-border">

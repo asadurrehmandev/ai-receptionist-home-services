@@ -14,7 +14,7 @@ from app.agent.scheduling import available_slots, format_slot
 from app.config_loader import BusinessConfig
 from app.integrations import deliver_webhook, enqueue_webhook, send_sms
 from app.llm.claude import ClaudeClient
-from app.llm.keys import build_session_client
+from app.llm.keys import build_session_client, scrub_secrets
 from app.llm.openai_client import OpenAIClient
 from app.store import Store, StoreCalendar
 
@@ -78,7 +78,7 @@ class ReceptionService:
         session_key: str | None = None,
         session_provider: str | None = None,
     ) -> dict:
-        text = (text or "")[:2000]
+        text = scrub_secrets((text or "")[:2000], session_key)
         wall = perf_counter()
         with self._lock_for(call_id):
             state = self.store.load_state(call_id)
@@ -108,6 +108,17 @@ class ReceptionService:
             public = self._public(call_id, result.say, result, state)
             public["engine_ms"] = round(engine_ms, 2)
             return public
+
+    def discard_open(self, call_id: str) -> bool:
+        """Drop a simulator call that never reached an outcome."""
+        try:
+            state = self.store.load_state(call_id)
+        except KeyError:
+            return False
+        if state.outcome is not None:
+            return False
+        self.store.delete_call(call_id)
+        return True
 
     def reset_and_seed(self, seed_fn) -> dict:
         self.store.wipe()

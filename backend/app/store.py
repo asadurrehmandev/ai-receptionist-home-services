@@ -132,6 +132,15 @@ class Store:
                 self.conn.execute(f"DELETE FROM {table}")
             self.conn.commit()
 
+    def delete_call(self, call_id: str) -> None:
+        with self._lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute("DELETE FROM turns WHERE call_id=?", (call_id,))
+            self.conn.execute("DELETE FROM events WHERE call_id=?", (call_id,))
+            self.conn.execute("DELETE FROM leads WHERE call_id=?", (call_id,))
+            self.conn.execute("DELETE FROM calls WHERE id=?", (call_id,))
+            self.conn.execute("COMMIT")
+
     def count_calls(self) -> int:
         with self._lock:
             return int(self.conn.execute("SELECT COUNT(*) AS n FROM calls").fetchone()["n"])

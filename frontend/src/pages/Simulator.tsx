@@ -1,7 +1,6 @@
 import { Check, Mic, Send } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
-import { LiveMark } from "@/components/CallerName";
 import { ErrorState } from "@/components/States";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +71,7 @@ export function Simulator() {
   const [flash, setFlash] = useState<string | null>(null);
   const [pinned, setPinned] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
+  const callIdRef = useRef<string | null>(null);
   const generation = useRef(0);
   const mutedRef = useRef(false);
   const prevFields = useRef<Record<string, string>>({});
@@ -112,7 +112,13 @@ export function Simulator() {
   async function begin() {
     generation.current += 1;
     window.speechSynthesis?.cancel();
+    const previous = callIdRef.current;
+    if (previous) {
+      callIdRef.current = null;
+      await api.discardCall(previous).catch(() => undefined);
+    }
     const started = await api.startCall();
+    callIdRef.current = started.id;
     setCallId(started.id);
     setBubbles([]);
     setTurn(started);
@@ -127,8 +133,11 @@ export function Simulator() {
   }
 
   useEffect(() => {
-    begin().catch((reason: Error) => setError(reason.message));
-    return () => window.speechSynthesis?.cancel();
+    return () => {
+      window.speechSynthesis?.cancel();
+      const id = callIdRef.current;
+      if (id) void api.discardCall(id).catch(() => undefined);
+    };
   }, []);
 
   useEffect(() => {
@@ -157,9 +166,14 @@ export function Simulator() {
 
   async function send(text: string, activeId = callId) {
     const trimmed = text.trim();
-    if (!activeId || !trimmed || ended) return null;
+    let id = activeId;
+    if (!id) {
+      const started = await begin();
+      id = started.id;
+    }
+    if (!id || !trimmed || ended) return null;
     setBubbles((current) => [...current, { role: "caller", text: trimmed }]);
-    const result = await api.sendTurn(activeId, trimmed);
+    const result = await api.sendTurn(id, trimmed);
     setTurn(result);
     setEvents((current) => [...current, ...result.events]);
     await typeReply(result.say, result.latency_ms);
@@ -247,6 +261,12 @@ export function Simulator() {
     setSpeaking(false);
     setBusy(false);
     setEnded(true);
+    const id = callIdRef.current;
+    if (id && !turn?.outcome) {
+      callIdRef.current = null;
+      void api.discardCall(id).catch(() => undefined);
+      setCallId(null);
+    }
   }
 
   if (error && bubbles.length === 0) return <ErrorState message={error} onRetry={() => begin()} />;
@@ -295,12 +315,7 @@ export function Simulator() {
             );
           })}
         </div>
-        <div className="mt-3">
-          <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || ended || !callId || cursor >= script.turns.length}>
-            Step
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-3 text-xs text-muted-foreground">
           Next line: {nextLine || "Scenario finished."}
         </p>
       </aside>
@@ -308,7 +323,13 @@ export function Simulator() {
       <section aria-label="Live call" className="order-1 flex h-[min(640px,calc(100dvh-7rem))] min-h-[420px] flex-col rounded-lg border border-border bg-card xl:order-none xl:h-auto xl:min-h-[560px]">
         <div className="flex flex-col gap-2 border-b border-border px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {ended ? <span className="text-sm text-muted-foreground">Ended</span> : <LiveMark />}
+            {ended ? (
+              <span className="text-sm text-muted-foreground">Ended</span>
+            ) : callId ? (
+              <span className="text-xs font-medium text-muted-foreground">In call</span>
+            ) : (
+              <span className="text-xs font-medium text-muted-foreground">Ready</span>
+            )}
             <span className="font-mono text-xs tabular-nums text-subtle">{formatElapsed(elapsed)}</span>
             <span className="truncate text-sm font-medium">Northline Plumbing</span>
             <span className="text-xs text-subtle">{PHASE_LABEL[turn?.phase || "discover"] || turn?.phase}</span>
@@ -321,7 +342,7 @@ export function Simulator() {
             <Button type="button" size="sm" variant="outline" onClick={endCall} disabled={ended}>
               End
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || ended || !callId || cursor >= script.turns.length}>
+            <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || ended || cursor >= script.turns.length}>
               Step
             </Button>
             <Button type="button" size="sm" onClick={playThrough} disabled={busy}>
@@ -339,6 +360,11 @@ export function Simulator() {
             setPinned(node.scrollHeight - node.scrollTop - node.clientHeight < 48);
           }}
         >
+          {bubbles.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Step through a scenario, or type what the caller would say. Nothing is logged until the call starts.
+            </p>
+          )}
           {bubbles.map((bubble, index) => (
             <div key={`${bubble.role}-${index}`} className={bubble.role === "caller" ? "ml-12" : "mr-12"}>
               <div className="mb-1 flex items-baseline justify-between text-xs text-subtle">

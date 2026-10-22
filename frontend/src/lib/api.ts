@@ -181,6 +181,8 @@ export const api = {
   config: () => request<PublicConfig>("/api/config"),
   health: () => request<Health>("/api/health"),
   startCall: () => request<DemoTurn>("/api/demo/calls", { method: "POST" }),
+  discardCall: (id: string) =>
+    request<{ ok: boolean }>(`/api/demo/calls/${id}/discard`, { method: "POST", keepalive: true }),
   sendTurn: (id: string, text: string) => {
     const session = getSession();
     const provider = resolvedProvider(session);

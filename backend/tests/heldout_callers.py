@@ -57,7 +57,7 @@ CASES = [
     dict(id="cancel-first-name-only", cat="existing", preload=True, turns=["Hi, this is Dana, I need to cancel my appointment"], expect_no_cancel_without_verify=True),
     dict(id="reschedule-dana", cat="existing", preload=True, turns=["This is Dana Cho, I need to move my appointment", "0133 Friday", "Monday afternoon", "yes"], active_day=26),
     dict(id="cancel-stranger-phone", cat="existing", preload=True, turns=["I want to cancel the appointment for 512-555-0133"], expect_no_cancel_without_verify=True),
-    dict(id="spanish-routine", cat="spanish", turns=["Hola, tengo una fuga de agua debajo del fregadero"], say_any=["español", "spanish", "hola"]),
+    dict(id="spanish-routine", cat="spanish", turns=["Hola, tengo una fuga de agua debajo del fregadero"], say_any=["nombre", "quién", "quien"]),
     dict(id="spanish-gas", cat="emergency", turns=["Huele a gas en mi cocina, ayuda"], outcome="escalated"),
     dict(id="wh-leak-garage", cat="emergency", turns=["My water heater is leaking all over the garage floor and it won't stop"], outcome="escalated"),
     dict(id="rotten-eggs", cat="emergency", turns=["There's a weird smell like rotten eggs near the stove"], outcome="escalated"),

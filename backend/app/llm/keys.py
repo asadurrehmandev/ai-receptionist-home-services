@@ -7,6 +7,7 @@ It is not written to the database, to disk, or to a log line.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -60,6 +61,18 @@ def redacted(secret: str | None):
         yield
     finally:
         _secrets.reset(token)
+
+
+_KEY_SHAPE = re.compile(r"(?<![A-Za-z0-9])(?:sk-ant-|sk-proj-|sk-)[A-Za-z0-9_\-]{8,}")
+
+
+def scrub_secrets(text: str, extra: str | None = None) -> str:
+    """Replace key-shaped text before it is stored in a transcript or a call state."""
+    cleaned = _KEY_SHAPE.sub("[redacted]", text or "")
+    secret = (extra or "").strip()
+    if len(secret) >= 8:
+        cleaned = cleaned.replace(secret, "[redacted]")
+    return cleaned
 
 
 def detect_provider(key: str, hinted: str | None) -> str:

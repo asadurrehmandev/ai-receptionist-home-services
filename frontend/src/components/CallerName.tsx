@@ -7,10 +7,5 @@ export function CallerName({ name, phone }: { name?: string | null; phone?: stri
 }
 
 export function LiveMark() {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-text">
-      <span className="live-dot" aria-hidden />
-      Live
-    </span>
-  );
+  return <span className="text-xs font-medium text-muted-foreground">In call</span>;
 }

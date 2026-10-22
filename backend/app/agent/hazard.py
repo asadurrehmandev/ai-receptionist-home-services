@@ -56,7 +56,7 @@ _CO_NAME = re.compile(
 )
 _CO_HARD = re.compile(
     r"\b(going off|won't stop|wont stop|will not stop|screaming|beeping|beeps|"
-    r"sin parar|sounding|ppm)\b",
+    r"sin parar|sounding|sonando|suena|sonar|ppm)\b",
     re.I,
 )
 _CO_BATTERY_ISSUE = re.compile(
@@ -67,19 +67,23 @@ _CO_PARTS_ERRAND = re.compile(r"\b(bring|parts|faucet|install|quote|buy|purchase
 _CO_BATTERY = re.compile(r"\b(battery|batteries|pila|pilas)\b", re.I)
 _SYMPTOM = re.compile(
     r"\b(headaches?|dizzy|dizziness|woozy|wooziness|nauseous|nauseated|nausea|vomit\w*|"
-    r"throwing up|feels? sick|passed out|confused)\b",
+    r"throwing up|feels? sick|passed out|confused|"
+    r"maread\w*|mareo|aturdid\w*|desmay\w*|confundid\w*|vomito)\b|"
+    r"\bdolor de cabeza\b",
     re.I,
 )
 _HEAT_SOURCE = re.compile(r"\b(furnace|heater|boiler|gas|carbon|monoxido)\b", re.I)
 _WATER_FORCE = re.compile(
-    r"\b(pouring|gushing|shooting|spraying|flooding|flooded|inundand\w*|inundad\w*|"
+    r"\b(pouring|gushing|shooting|spraying|spewing|spurting|jetting|blasting|erupting|"
+    r"cascading|geyser(?:ing)?|scalding|scalds?|"
+    r"flooding|flooded|inundand\w*|inundad\w*|inundacion\w*|"
     r"burst|busted|won't stop|wont stop|will not stop|won't shut|wont shut|will not shut|"
     r"can't shut|cant shut|shut off|feet of water|agua por todas|saliendo|no para|sin parar|chorro)\b",
     re.I,
 )
 _WATER_NOUN = re.compile(
     r"\b(water|agua|pipe|pipes|line|ceiling|wall|basement|garage|sewage|sewer|"
-    r"alcantarill\w*)\b",
+    r"alcantarill\w*|piso|sotano|sotanos)\b",
     re.I,
 )
 _WATER_PATH = re.compile(
@@ -637,6 +641,12 @@ def _water(clause: str) -> bool:
     path = _WATER_PATH.search(clause)
     if path and not _negated_at(clause, path.start()):
         return True
+    if _steam_or_scald(clause):
+        return True
+    flood = re.search(r"\b(inundand\w*|inundad\w*|inundacion\w*|se inunda)\b", clause)
+    if flood and not _negated_at(clause, flood.start()):
+        if not re.search(r"\b(inspecc\w*|inspection|cotiz\w*|presupuesto|quote|estimate)\b", clause):
+            return True
     force = next(
         (match for match in _WATER_FORCE.finditer(clause) if not _negated_at(clause, match.start())),
         None,
@@ -673,6 +683,98 @@ def _electrical(clause: str) -> bool:
             if _negated_at(clause, device.start()):
                 continue
             if abs(device.start() - hazard.start()) <= 60:
+                return True
+    if _electrical_damage(clause):
+        return True
+    return False
+
+
+_STEAM_ESCAPE = re.compile(
+    r"\b(steam|vapor|vapour)\b.{0,40}\b(escap\w*|blast\w*|billow\w*|pour\w*|shoot\w*|"
+    r"spew\w*|spurt\w*|jet\w*|uncontrolled|everywhere|scald\w*)\b|"
+    r"\b(escap\w*|blast\w*|billow\w*|spew\w*|spurt\w*|jet\w*|scald\w*)\b.{0,40}"
+    r"\b(steam|vapor|vapour)\b",
+    re.I,
+)
+_STEAM_ROUTINE = re.compile(r"\b(steam\s+(?:clean\w*|mop|iron|humidifier)|humidifier)\b", re.I)
+_SCORCH_WORD = re.compile(
+    r"\b(burnt|burned|charred|scorched|blackened|blistered|melting|melted)\b",
+    re.I,
+)
+_BLACK_RING = re.compile(
+    r"\bblack\b.{0,32}\b(around|ring|rings|edge|edges|soot|halo|circle)\b|"
+    r"\b(around|ring|edges|soot)\b.{0,32}\bblack\b",
+    re.I,
+)
+_ARCING_WORD = re.compile(r"\b(buzz\w*|arcing|flicker\w*|flash(?:es|ed|ing)?)\b", re.I)
+_COVER_COLOR = re.compile(r"\b(cover|plate|faceplate)\b", re.I)
+
+
+def _cover_color_only(text: str) -> bool:
+    """A black or white cover plate is a color, not a scorch."""
+    if not _COVER_COLOR.search(text):
+        return False
+    if _SCORCH_WORD.search(text) or _BLACK_RING.search(text) or _ARCING_WORD.search(text):
+        return False
+    if re.search(r"\b(sparks?|sparking|chispas?|smoke|smoking)\b", text):
+        return False
+    return bool(re.search(r"\b(black|white|ivory|almond|color|colour|paint)\b", text))
+
+
+def _dead_or_quote_electrical(text: str) -> bool:
+    """A dead outlet or a panel-replacement quote is a job, not a live hazard."""
+    if _electrical_damage(text) or re.search(r"\b(sparks?|sparking|chispas?|smoke|smoking)\b", text):
+        return False
+    dead = bool(re.search(r"\b(dead|no power|without power)\b", text) and _HAZARD_DEVICE.search(text))
+    quote = bool(re.search(r"\b(quote|estimate)\b", text) and _HAZARD_DEVICE.search(text))
+    return dead or quote
+
+
+def _steam_or_scald(clause: str) -> bool:
+    """Steam or scalding water leaving a pipe or appliance. A steam mop is not this."""
+    if _STEAM_ROUTINE.search(clause):
+        return False
+    found = _STEAM_ESCAPE.search(clause)
+    if found and not _negated_at(clause, found.start()):
+        return True
+    scald = re.search(r"\bscald\w*\b", clause)
+    if scald and not _negated_at(clause, scald.start()) and _WATER_NOUN.search(clause):
+        return True
+    return False
+
+
+_HAZARD_DEVICE = re.compile(
+    r"\b(outlet|socket|receptacle|breaker|panel|switch|wire|wiring|plug)\b",
+    re.I,
+)
+
+
+def _electrical_damage(clause: str) -> bool:
+    """A scorched outlet or a buzzing or flashing panel. A dead outlet or a cover color is not."""
+    if _COOKING.search(clause) and not re.search(r"\b(outlet|panel|breaker|wire)\b", clause):
+        return False
+    if not _HAZARD_DEVICE.search(clause):
+        return False
+    if re.search(r"\bflashlight\b", clause):
+        clause = re.sub(r"\bflashlight\b", " ", clause, flags=re.I)
+    scorched = _SCORCH_WORD.search(clause) or _BLACK_RING.search(clause)
+    arcing = _ARCING_WORD.search(clause)
+    if _COVER_COLOR.search(clause) and re.search(r"\b(black|white|ivory|almond|color|colour|paint)\b", clause):
+        if not scorched and not arcing:
+            return False
+    if not scorched and not arcing:
+        return False
+    if re.search(r"\b(quote|estimate|replacement)\b", clause) and not scorched and not arcing:
+        return False
+    if re.search(r"\b(dead|no power|without power)\b", clause) and not scorched and not arcing:
+        return False
+    for device in _HAZARD_DEVICE.finditer(clause):
+        if _negated_at(clause, device.start()):
+            continue
+        for mark in list(_SCORCH_WORD.finditer(clause)) + list(_BLACK_RING.finditer(clause)) + list(_ARCING_WORD.finditer(clause)):
+            if _negated_at(clause, mark.start()):
+                continue
+            if abs(device.start() - mark.start()) <= 80:
                 return True
     return False
 
@@ -1015,7 +1117,7 @@ def _alarm_with_symptom(text: str) -> bool:
         return False
     sounding = re.search(
         r"\b(sounding|going off|won't quit|wont quit|will not quit|won't stop|wont stop|"
-        r"will not stop|keeps sounding|nonstop|has been sounding)\b",
+        r"will not stop|keeps sounding|nonstop|has been sounding|sonando|suena|sonar|sin parar)\b",
         text,
     )
     if sounding and not _negated_at(text, sounding.start()):
@@ -1453,6 +1555,8 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         guessed = ("none", None)
     if guessed[1] == "Active water" and _mild_water(folded):
         guessed = ("none", None)
+    if guessed[1] == "Electrical hazard" and (_cover_color_only(folded) or _dead_or_quote_electrical(folded)):
+        guessed = ("none", None)
     if guessed[1] == "Electrical hazard" and _soft_electrical(folded):
         guessed = ("ask", "Electrical hazard")
     if _damp_mark(folded):
@@ -1493,7 +1597,7 @@ def _extreme_temperature(text: str) -> bool:
 
 def _mild_water(text: str) -> bool:
     """A drip is not a flood. Semantic water cannot promote it."""
-    if _WATER_FORCE.search(text) or _sewage_active(text) or _WATER_PATH.search(text):
+    if _WATER_FORCE.search(text) or _sewage_active(text) or _WATER_PATH.search(text) or _steam_or_scald(text):
         return False
     drip = re.compile(r"\b(drip\w*|leak\w*|weeping|seeping|gote\w*|goutte\w*|tropft|pingando)\b", re.I)
     return _hit(text, drip)

@@ -194,9 +194,10 @@ export function CalendarPage() {
                     ))}
                     {showNow && key === today && (
                       <div className="pointer-events-none absolute inset-x-0 z-20" style={{ top: nowMinutes * PX_PER_MIN }}>
-                        <div className="relative h-px bg-danger">
-                          <span className="absolute -top-2 left-1 text-xs font-medium text-danger">Now</span>
+                        <div className="absolute -top-4 left-1 rounded-sm bg-card px-1 text-[10px] font-medium leading-4 text-danger">
+                          Now
                         </div>
+                        <div className="h-px bg-danger" />
                       </div>
                     )}
                     {items.map((job) => {

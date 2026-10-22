@@ -31,13 +31,12 @@ export function ModeBadge() {
             role="status"
             className={
               live
-                ? "inline-flex h-5 max-w-full items-center gap-1 rounded-sm bg-info-soft px-1.5 text-xs font-medium text-info"
-                : "inline-flex h-5 max-w-full items-center gap-1 rounded-sm bg-warning-soft px-1.5 text-xs font-medium text-warning"
+                ? "inline-flex min-h-5 max-w-full items-center gap-1 rounded-sm bg-info-soft px-1.5 py-0.5 text-xs font-medium text-info"
+                : "inline-flex min-h-5 max-w-full items-center gap-1 rounded-sm bg-warning-soft px-1.5 py-0.5 text-xs font-medium text-warning"
             }
           >
             <FlaskConical className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span className="truncate sm:hidden">{live ? "Live" : "Demo mode"}</span>
-            <span className="hidden truncate sm:inline">{short}</span>
+            <span className="whitespace-normal">{short}</span>
             <span className="sr-only">{label}</span>
             {session.note ? <span className="sr-only">{session.note}</span> : null}
           </p>

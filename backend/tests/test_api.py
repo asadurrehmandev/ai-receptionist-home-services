@@ -36,14 +36,26 @@ def client(tmp_path):
         yield test_client
 
 
+def _require_hazard_models() -> None:
+    from app.agent.hazard_nli import nli_ready
+    from app.agent.hazard_semantic import semantic_ready
+
+    if not (semantic_ready() and nli_ready()):
+        pytest.skip("MiniLM and DeBERTa NLI weights are not on disk. Run python scripts/fetch_models.py")
+
+
 def test_health_reports_rule_brain(client):
+    _require_hazard_models()
     response = client.get("/api/health")
     assert response.status_code == 200
     body = response.json()
     assert body["ok"] is True
     assert body["brain"] == "rules"
-    assert body["classifier"] == "keyword"
+    assert body["classifier"] == "keyword+nli"
+    assert body["hazard_screen"] == "rules+minilm+nli"
     assert body["understander"] == "keyword"
+    assert body["voice_ready"] is False
+    assert "not a live phone" in body["voice_block_reason"]
     assert body["understand_ready"] is False
     assert body["degraded"] == []
     assert body["llm"] is False
@@ -232,6 +244,17 @@ def test_seed_scripts_and_reset(tmp_path):
     clock = FixedClock(datetime(2026, 10, 21, 10, 0, tzinfo=ZoneInfo("America/Chicago")))
     service = ReceptionService(config, store, settings, clock=clock)
     seed_demo(service)
+    from datetime import timedelta
+
+    calls = store.list_calls()
+    stamps = [datetime.fromisoformat(call["started_at"]) for call in calls]
+    assert max(stamps) - min(stamps) >= timedelta(hours=6)
+    for call in calls:
+        span = datetime.fromisoformat(call["ended_at"]) - datetime.fromisoformat(call["started_at"])
+        assert timedelta(minutes=2) <= span <= timedelta(minutes=6)
+    lena = next(call for call in calls if call["caller_name"] == "Lena Ortiz")
+    assert lena["issue"] == "Burst pipe"
+    assert lena["outcome"] == "escalated"
     counts = store.outcome_counts()
     assert counts.get("booked", 0) >= 3
     assert counts.get("escalated", 0) >= 1

@@ -159,10 +159,33 @@ def understander_name() -> str:
 
 
 def classifier_mode() -> str:
-    """The path that actually labels a live turn. A model file on disk is not a mode."""
+    """The path that actually labels a live turn. A model file on disk is not a mode.
+
+    With no API key the hazard screen is the keyword rules plus MiniLM and the
+    DeBERTa NLI model when those weights are loaded. Claude is only the
+    optional understander.
+    """
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "claude"
+    from app.agent.hazard_nli import nli_ready
+    from app.agent.hazard_semantic import semantic_ready
+
+    if semantic_ready() and nli_ready():
+        return "keyword+nli"
     return "keyword"
+
+
+def hazard_screen_mode() -> str:
+    """rules, plus minilm and nli for each model that actually loaded."""
+    from app.agent.hazard_nli import nli_ready
+    from app.agent.hazard_semantic import semantic_ready
+
+    parts = ["rules"]
+    if semantic_ready():
+        parts.append("minilm")
+    if nli_ready():
+        parts.append("nli")
+    return "+".join(parts)
 
 
 def understand_ready() -> bool:

@@ -98,6 +98,11 @@ def test_same_call_duplicate_yes_books_once(tmp_path):
 
 
 def test_locked_api_requires_token_and_hides_demo(tmp_path):
+    from app.agent.hazard_nli import nli_ready
+    from app.agent.hazard_semantic import semantic_ready
+
+    if not (semantic_ready() and nli_ready()):
+        pytest.skip("MiniLM and DeBERTa NLI weights are not on disk. Run python scripts/fetch_models.py")
     settings = _settings(tmp_path, demo_mode=False, admin_token="desk-token")
     with TestClient(create_app(settings)) as client:
         assert client.get("/api/health").status_code == 200
