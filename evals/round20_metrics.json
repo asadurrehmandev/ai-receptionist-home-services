@@ -1,0 +1,55 @@
+{
+  "heldout": "evals/round20_heldout_set.py",
+  "sha256": "bcc2bf02c58b73c5e501ff857217d1d74f417b5271d8010ac540530e6f8fe69e",
+  "lines": 44,
+  "thresholds": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.40
+  },
+  "thresholds_moved": false,
+  "keep_starts_at": "page_min",
+  "e2e_page_recall": "24/24",
+  "e2e_page_recall_rate": 1.0,
+  "false_pages": 0,
+  "false_page_denominator": 20,
+  "non_en_hazard": 12,
+  "non_en_hazard_english_menu": 0,
+  "non_en_hazard_no_menu": "12/12",
+  "booking_instruction_emergency_lines": 2,
+  "booking_instruction_emergency_false_pages": 0,
+  "booking_instruction_emergency_fee_quotes": 0,
+  "heads_at_or_above_page_cut": 3,
+  "heads_at_or_above_page_cut_neither_page_nor_safety": 3,
+  "heads_at_or_above_page_cut_missed_hazard_gap": 0,
+  "heads_gap_note": "The three heads at or above 0.55 with neither a page nor a safety question are positive routines: the powder-room aerator booking at 0.628, the declare-fire instruction at 0.564 (classify asks; the engine drops the instruction and opens the menu; no fee), and the ice maker overflowing into the freezer at 0.805. Missed-hazard gap is 0.",
+  "howling_illness_fresh_air": "6/6",
+  "sewage_stay_away": "9/9",
+  "emergencies_under_page_cut_still_paged_by_rules": [
+    "Ganda paani nali se wapas aa raha hai abhi. (0.513)",
+    "My newborn is in a cold room and the heat stopped. (0.515)",
+    "O bebê está no quarto frio e o aquecimento parou. (0.435)",
+    "A idosa está com frio e o calor acabou na sala. (0.516)"
+  ],
+  "by_family_e2e": {
+    "co": "6/6",
+    "electrical": "3/3",
+    "sewage": "9/9",
+    "gas": "2/2",
+    "comfort": "3/3",
+    "flood": "1/1"
+  },
+  "fresh": {
+    "transfer": "36/36",
+    "advice": "8/8",
+    "routine": "68/68"
+  },
+  "head": "intfloat/multilingual-e5-large",
+  "checkpoint_blob_bytes": 2235363328,
+  "checkpoint_cache_bytes": 2252995899,
+  "demo_rss_kb": 2628020,
+  "demo_hwm_kb": 2640716,
+  "demo_peak_kb": 4988752,
+  "pytest": "312 passed, 4 warnings"
+}

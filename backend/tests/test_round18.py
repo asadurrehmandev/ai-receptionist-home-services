@@ -166,10 +166,10 @@ def test_a_high_head_is_not_cleared_by_a_fixture_or_the_word_emergency(monkeypat
 def test_the_second_turn_that_names_neither_asks_safety_and_a_clean_no_calls_back():
     engine = _engine()
     state = SessionState()
-    first = engine.handle(state, "I cannot quite say what is going on.")
+    first = engine.handle(state, "It is difficult to describe from the driveway.")
     assert "what's going on" in first.say.lower()
     assert state.issue is None
-    second = engine.handle(state, "Hard to put into words.")
+    second = engine.handle(state, "blah blah blah")
     assert "danger" in second.say.lower()
     assert state.phase == "unclear_handoff"
     answer = engine.handle(state, "no")

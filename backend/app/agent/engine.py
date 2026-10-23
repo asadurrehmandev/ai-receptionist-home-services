@@ -212,6 +212,16 @@ _LEAVE = {
         "roman": "Agar koi zakhmi ho to 911 call karein.",
     },
 }
+_DISCOVER = {
+    "en": "I can help with a new repair, an estimate, an existing appointment, or an emergency. What's going on?",
+    "es": "Puedo ayudarle con una reparación, un presupuesto, una cita que ya tiene, o una emergencia. ¿Qué está pasando?",
+    "pt": "Posso ajudar com um reparo, um orçamento, uma visita marcada, ou uma emergência. O que está acontecendo?",
+    "tl": "Matutulungan kita sa bagong repair, isang tantya, isang nakatakdang bisita, o isang emergency. Ano ang nangyayari?",
+    "hi": "मैं नई मरम्मत, अनुमान, मौजूदा अपॉइंटमेंट, या इमरजेंसी में मदद कर सकता हूँ। क्या हो रहा है?",
+    "ur": "میں نئی مرمت، تخمینہ، موجودہ اپائنٹمنٹ، یا ایمرجنسی میں مدد کر سکتا ہوں۔ کیا ہو رہا ہے؟",
+    "ar": "أستطيع المساعدة في إصلاح جديد أو تقدير أو موعد قائم أو حالة طارئة. ماذا يحدث؟",
+    "roman": "Main nayi marammat, andaza, maujooda appointment, ya emergency mein madad kar sakta hoon. Kya ho raha hai?",
+}
 _CALLBACK = {
     "en": "I can't book a visit in this language. A person will call you back. If you smell gas, leave the house and call 911 or your gas company.",
     "es": "No reservo visitas en español. Una persona de la oficina le devolverá la llamada. Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas.",
@@ -426,11 +436,7 @@ class Engine:
                 if state.unclear_count >= 2 or state.language not in {"en", "es"}:
                     state.phase = "unclear_handoff"
                     return self._finish(state, self._safety_prompt(state), started)
-                return self._finish(
-                    state,
-                    "I can help with a new repair, an estimate, an existing appointment, or an emergency. What's going on?",
-                    started,
-                )
+                return self._finish(state, _DISCOVER.get(state.language, _DISCOVER["en"]), started)
             if state.intent == "existing_booking":
                 return self._existing(state, raw, started)
             if state.intent == "quote" and not state.issue:
@@ -528,11 +534,7 @@ class Engine:
             self._fill(state, raw)
             return self._on_confirm(state, raw, started)
 
-        return self._finish(
-            state,
-            "I can help with a new repair, an estimate, an existing appointment, or an emergency. What's going on?",
-            started,
-        )
+        return self._finish(state, _DISCOVER.get(state.language, _DISCOVER["en"]), started)
 
     def _fill(self, state: SessionState, text: str) -> None:
         if not state.caller_id:

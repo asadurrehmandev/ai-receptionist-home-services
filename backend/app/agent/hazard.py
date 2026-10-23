@@ -109,7 +109,7 @@ _WATER_PATH = re.compile(
     re.I,
 )
 _SEWAGE = re.compile(
-    r"\b(sewage|sewer|raw sewage|sewer water|wastewater|brown water|black water|"
+    r"\b(sewage|sewer|raw sewage|sewer water|waste ?water|brown water|black water|"
     r"alcantarill\w*|poop water|aguas? negras|"
     r"aguas? sucias?|aguas? podridas?|aguas? sujas?|aguas? podres?|"
     r"maduming tubig|maruming tubig)\b",
@@ -117,7 +117,7 @@ _SEWAGE = re.compile(
 )
 _SEWAGE_MOTION = re.compile(
     r"\b(backup|backing|backed|coming|overflow|subiendo|regres\w*|devolv\w*|"
-    r"subindo|no para|pushing|empuj\w*|saindo)\b",
+    r"subindo|no para|pushing|empuj\w*|saindo|surg\w*|welling|belch\w*)\b",
     re.I,
 )
 _ELECTRICAL = re.compile(
@@ -352,7 +352,8 @@ _LEAVING_APPLIANCE = re.compile(
 )
 _WATER_MOTION = re.compile(r"\b(water|agua|drip\w*|leak\w*|wet|gote\w*)\b", re.I)
 _ELEC_SURFACE = re.compile(
-    r"\b(fixtures?|outlets?|sockets?|receptacles?|wiring|electric\w*|lights?|lamps?|luminaires?|cords?|breakers?|panels?)\b",
+    r"\b(fixtures?|outlets?|sockets?|receptacles?|wiring|electric\w*|lights?|lamps?|luminaires?|cords?|breakers?|panels?|"
+    r"fans?)\b",
     re.I,
 )
 _FROM_WORD = re.compile(r"\b(from|out of|off of|through|de la|del|desde)\b", re.I)
@@ -486,6 +487,13 @@ def _compose_water_electric(text: str) -> bool:
     if touching and _near(text, _WATER_MOTION, _ELEC_SURFACE, 64):
         return True
     if re.search(r"\blanding on\b", text) and _WATER_MOTION.search(text) and _ELEC_SURFACE.search(text):
+        return True
+    # Water leaving the device: "running off the ceiling fan". A drip tracking
+    # toward a panel is not this.
+    if _WATER_MOTION.search(text) and re.search(
+        r"\b(?:off|from)\s+(?:the\s+)?(?:ceiling\s+)?(?:fans?|lights?|fixtures?|outlets?|panels?|breakers?)\b",
+        text,
+    ):
         return True
     for device in _ELEC_SURFACE.finditer(text):
         if _negated_at(text, device.start()):
@@ -703,7 +711,7 @@ _HAZARD_NOUN = re.compile(
 _PLAIN_JOB = re.compile(
     r"\b(sump(?:\s+pump)?|exhaust fan|bath fan|bathroom fan|gfci|gfi|"
     r"flood sensors?|water softener|softener|check-?up|checkup|inspection|"
-    r"tune-?up|spigots?|hose bibs?|sillcocks?)\b",
+    r"tune-?up|spigots?|hose bibs?|sillcocks?|sprinklers?)\b",
     re.I,
 )
 _ORDINARY_JOB = re.compile(
@@ -937,8 +945,8 @@ _FILL_PLACE = re.compile(
 )
 _DETECTOR_DEVICE = re.compile(r"\b(?:detectors?|alarms?|alarme|alarma)\b", re.I)
 _DETECTOR_HOWL = re.compile(
-    r"\b(?:howling|screaming|shrieking|blaring|wailing|yowl\w*|aullando|gritando|uivando|baj raha)\b|"
-    r"\b(?:won't|wont|will not|cannot|can't)\s+quit\b",
+    r"\b(?:howling|screaming|shrieking|blaring|wailing|yowl\w*|aull\w*|gritando|uivando|baj raha)\b|"
+    r"\b(?:won't|wont|will not|would not|wouldn't|wouldnt|cannot|can't)\s+(?:quit|stop)\b",
     re.I,
 )
 # A howling person is not a detector. A unit, a box, a ceiling, or an alarm is.
@@ -946,13 +954,17 @@ _DETECTOR_HOWL = re.compile(
 _HOWL_SOURCE = re.compile(
     r"\b(?:detectors?|alarms?|alarme|alarma|units?|devices?|apparatus|aparatos?|"
     r"something|ceiling|wall|techo|caja|unidad|unidades|sensors?|box(?:es)?|"
-    r"closets?|attics?|crawlspaces?|mechanical|utility)\b",
+    r"closets?|attics?|crawlspaces?|mechanical|utility|"
+    r"returns?|grilles?|vents?|monitors?|rejillas?|grelhas?|retornos?|grades?)\b",
     re.I,
 )
 _ILLNESS = re.compile(
     r"\b(?:dizzy|dizziness|nauseous|nauseated|nausea|vomit\w*|headaches?|pounding|"
-    r"faint|feels? sick|sick|mareo|mareada|chakkar|nahihilo|tont[oa]s?|tontura)\b|"
-    r"\bdolor de cabeza\b|\bduele(?:n)? la cabeza\b|\bdor de cabeca\b",
+    r"faint|feels? sick|sick|queasy|light-?headed|breathless|winded|"
+    r"short of breath|splitting head|head is splitting|"
+    r"mareo|mareada|chakkar|nahihilo|tont[oa]s?|tontura|enjoad\w*)\b|"
+    r"\bdolor de cabeza\b|\bduele(?:n)? la cabeza\b|\bdor de cabeca\b|"
+    r"\bme falta el aire\b|\bfalta de ar\b|\bsem folego\b",
     re.I,
 )
 
@@ -1060,7 +1072,10 @@ def _present_patterns(text: str) -> tuple[str, str] | None:
     if re.search(r"\b(rotten eggs?|sulfur|sulphur|egg smell|smell\w*\s+eggs|"
                  r"smells? like eggs|like eggs|"
                  r"like a leak|smells? like a leak|a leak smells|like gas)\b", text):
-        if re.search(r"\b(pilot|burner|oven|range|dryer|furnace|fireplace|meter|cooktop|stove|boiler)\b", text):
+        if re.search(
+            r"\b(pilot|burner|oven|range|dryer|furnace|fireplace|meter|cooktop|stove|boiler|regulator)\b",
+            text,
+        ):
             return "definite", "Gas"
     if re.search(r"\bpilot\b", text) and re.search(
         r"\b(keeps dying|keeps going out|goes out|won't stay|wont stay|will not stay)\b",
@@ -2508,7 +2523,7 @@ def _mild_water(text: str) -> bool:
     A supply that let go, or a room that is filling, is not a mild drip
     even when the same sentence also says drip.
     """
-    if _uncontrolled_water(text) or _sounding_detector(text):
+    if _uncontrolled_water(text) or _sounding_detector(text) or _compose_water_electric(text):
         return False
     if _WATER_FORCE.search(text) or _sewage_active(text) or _WATER_PATH.search(text) or _steam_or_scald(text):
         return False
@@ -2634,7 +2649,7 @@ _EXTREME_WORD = re.compile(
     r"bahut thand|bohot thand|bahut garmi|bohot garmi|"
     r"muito frio|muito calor|gelad[ao]s?|"
     r"quarto.{0,24}frio|esta frio|com frio|frio e o aquecimento|"
-    r"calor acabou|acabou o calor|"
+    r"calor acabou|acabou o calor|cold room|room is cold|house is cold|too cold|"
     r"sobrang lamig|sobrang init|"
     r"बहुत ठंड|बहुत गर्मी|"
     r"بہت ٹھنڈ|بہت گرمی|"
@@ -2972,6 +2987,8 @@ def _booking_admin(text: str) -> bool:
         return False
     if re.search(r"\b(?:cancel|reschedul\w*|appointment|which (?:one|appointment))\b", raw, re.I):
         return True
+    if re.search(r"\b(?:already booked|move (?:a |the )?(?:diagnostic|appointment|visit))\b", raw, re.I):
+        return True
     if re.search(r"\b(?:never ?mind|gotta go|got to go|have to go|i gotta)\b", raw, re.I):
         return True
     if re.search(r"\b(?:call me back|callback|call back)\b", raw, re.I):
@@ -3262,28 +3279,9 @@ def _blocks_head_page(text: str) -> bool:
         or _seasonal_dust(text)
         or _declared_no_leak(text)
         or _mild_comfort_only(text)
-        or _benign_home_talk(text)
         or framed_entirely_away(text)
     ):
         return True
-    return False
-
-
-def _benign_home_talk(text: str) -> bool:
-    """Maintenance, a reschedule, or a comfortable house. Not a live hazard."""
-    if _fire_or_smoke(text) or _gas_happening(text) or _live_force(text) or _sewage_active(text):
-        return False
-    if re.search(r"\b(?:sparks?|sparking|smoke|smoking|flood\w*|burst\w*|sewage|monoxide|alarm)\b", text):
-        return False
-    if re.search(
-        r"\b(?:filter|return vent|sprinkler|blower|disposal|ice ?maker|air handler|"
-        r"already booked|move a diagnostic|reschedul\w*|locked myself)\b",
-        text,
-    ):
-        return True
-    if re.search(r"\b(?:house|casa|home)\b", text) and re.search(r"\b(?:6[5-9]|7[0-9]|8[0-4])\b", text):
-        if not _VULNERABLE.search(text) and not _older_adult(text) and not _extreme_temperature(text):
-            return True
     return False
 
 
@@ -3406,12 +3404,17 @@ def _spanish_wait(original: str) -> bool:
 
 
 def _positive_routine(prepared: str, original: str) -> bool:
-    """The only clearance that may zero a head at or above 0.80.
+    """The only clearance that may zero a definite head.
 
-    A benign-home word, a fixture, a drip, the word emergency, or Spanish
-    intent alone is not a match. Present-hazard has to have found no hazard first.
+    The keep starts at the page cut. A drip, a fixture, a fan, or a leak
+    label is not a match while a howl, sewage, fan-water, or other present
+    hazard is in the sentence. The vague menu is not a match. A recognized
+    job may clear the head only after those checks find nothing.
     """
     if _physical_change(prepared) or _missed_hazard_shape(prepared):
+        return False
+    # A howl plus illness is not a faucet job, even when the source list misses.
+    if _DETECTOR_HOWL.search(prepared) and (_ILLNESS.search(prepared) or _symptom_live(prepared)):
         return False
     active = _active_context(prepared) or ""
     if (
@@ -3452,6 +3455,16 @@ def _positive_routine(prepared: str, original: str) -> bool:
     ):
         return True
     if _spanish_wait(original):
+        return True
+    # A recognized job the hazard checks already cleared. A drip or a fixture
+    # word does not reach here when a howl, sewage, or fan-water shape is present.
+    if _routine_context(prepared) or _sink_backup(prepared):
+        return True
+    if _ordinary_fixture(prepared) or _catalogue_job(prepared) or _plain_job(prepared) or _routine_service(prepared):
+        return True
+    if re.search(r"\blocked myself\b", prepared, re.I):
+        return True
+    if re.search(r"\bfilters?\b", prepared, re.I) and re.search(r"\b(?:dirty|dusty|change|replace)\b", prepared, re.I):
         return True
     return False
 
@@ -3499,42 +3512,11 @@ def _routine_clearance(prepared: str, original: str) -> bool:
         or _seasonal_dust(prepared)
         or _declared_no_leak(prepared)
         or _mild_comfort_only(prepared)
-        or _benign_home_talk(prepared)
         or framed_entirely_away(prepared)
         or framed_entirely_away(original)
     ):
         return True
     return False
-
-
-def _confirmed_safe_routine(prepared: str, original: str) -> bool:
-    """A routine whose present-hazard check found no hazard.
-
-    This is the only clearance allowed to zero a head at or above 0.80.
-    """
-    if _physical_change(prepared) or _missed_hazard_shape(prepared):
-        return False
-    active = _active_context(prepared) or ""
-    if (
-        _present_hazard_clause(prepared)
-        or _uncontrolled_water_now(active)
-        or _sounding_detector(active)
-        or _sewage_active(active)
-        or _gas_happening(prepared)
-        or _fire_or_smoke(prepared)
-        or _comfort_bundle(prepared)
-    ):
-        return False
-    if _routine_clearance(prepared, original):
-        return True
-    # A Spanish job can clear a high head only after the checks above found
-    # no sewage, no howling unit, and no other present hazard.
-    try:
-        from app.agent.nlu import _spanish_intent
-
-        return _spanish_intent(original) in {"new_job", "quote", "existing_booking"}
-    except Exception:
-        return False
 
 
 def _hard_routine(prepared: str, original: str) -> bool:
@@ -3643,47 +3625,25 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
             return "none", None
         return "ask", "Hazard model unavailable"
     head_score = _emergency_probability(text) if head is not None else None
-    high_head = head[0] == "definite" and head_score is not None and head_score >= 0.80
+    from app.agent.hazard_head import PAGE_MIN
+
+    # A definite head already cleared the page cut. Keep it. Do not wait for 0.80.
+    kept_head = head[0] == "definite" and head_score is not None and head_score >= PAGE_MIN
     if (_denied_gas_and_smoke(prepared) or _past_and_dry(prepared)) and not _raised_live(prepared):
         # A denied gas-and-smoke list, or a past failure that is dry now, stays
         # a routine. A hand list must not page one the head scored under 0.20,
         # and it must not page one at any score when no live hazard remains.
         return "none", None
-    if high_head:
-        # Keep this head before the emergency-word branch. A fixture, a drip,
-        # or the word emergency is not a routine. Only a positive match with
-        # no present hazard may zero it. If that check misses, page or ask.
+    if kept_head:
+        # A drip, a fixture, a fan, a leak label, or the vague menu is not a
+        # routine. Only a positive match with no present hazard may zero this
+        # head. If that check misses, page or ask. Do not collect a name.
         if _positive_routine(prepared, text):
             head = ("none", None)
         elif _physical_change(prepared) or _vague_menu_turn(prepared, text):
             head = ("ask", "Uncertain hazard")
         else:
             pass
-    elif head[0] == "definite" and _emergency_word_only(prepared):
-        # Saying "emergency" inside a booking or an instruction is not a page.
-        # This runs only when the head is under 0.80.
-        head = ("none", None)
-    elif head[0] == "definite" and _hard_routine(prepared, text):
-        head = ("none", None)
-    elif head[0] == "definite" and not _present_hazard_clause(prepared):
-        if _physical_change(prepared):
-            head = ("ask", head[1] or "Uncertain hazard")
-        elif (
-            _vague_menu_turn(prepared, text)
-            or _schedule_pick(text)
-            or _schedule_pick(prepared)
-            or _instruction_only(prepared)
-            or _filler_turn(text)
-            or _filler_turn(prepared)
-            or _dialog_act(text)
-            or _booking_request(prepared)
-            or _slot_shaped(text)
-        ):
-            head = ("none", None)
-        elif _blocks_head_page(prepared):
-            head = ("none", None)
-    elif head[0] == "definite" and _blocks_head_page(prepared):
-        head = ("none", None)
     if (
         head[0] == "definite"
         and floor[0] != "definite"
@@ -3705,7 +3665,7 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         result = floor
     if result[1] == "Hazard" and rules[0] == "definite" and rules[1] not in {None, "Hazard"}:
         result = rules
-    keep_high = high_head and not _positive_routine(prepared, text)
+    keep_high = kept_head and not _positive_routine(prepared, text)
     if not keep_high and (
         result[1] == "Caller said emergency"
         or (result[0] == "definite" and _emergency_word_only(prepared))
@@ -3766,6 +3726,8 @@ def _recognized_clear(prepared: str, original: str) -> bool:
     """A routine, a slot, filler, or a vague English line. Not a missed hazard."""
     if _present_hazard_clause(prepared):
         return False
+    if _positive_routine(prepared, original):
+        return True
     if _blocks_head_page(prepared) or _fast_routine(prepared):
         return True
     if _filler_turn(original) or _filler_turn(prepared):

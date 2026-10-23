@@ -240,6 +240,9 @@ SPANISH_HINTS = (
     "manana",
     "inodoro",
     "retrete",
+    "peligro",
+    "estamos",
+    "tarde",
 )
 
 
@@ -287,7 +290,13 @@ def is_spam(text: str) -> bool:
 def looks_spanish(text: str) -> bool:
     norm = _fold_latin(normalize(text))
     hits = [hint for hint in SPANISH_HINTS if re.search(rf"\b{re.escape(hint)}\b", norm)]
-    if "hola" in hits or "huele" in hits:
+    if "hola" in hits or "huele" in hits or "peligro" in hits:
+        return True
+    # A weekday by itself is the caller's language. "el viernes" is not English.
+    if re.search(
+        r"\b(?:el|los)\s+(?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b",
+        norm,
+    ):
         return True
     if re.search(r"[¿¡ñ]", text or ""):
         return len(hits) >= 1
@@ -766,6 +775,19 @@ _FLED = re.compile(
 )
 
 
+def _slot_or_booking_answer(text: str) -> bool:
+    """A street, a phone, a schedule, or a booking is not a yes to the safety question."""
+    raw = text or ""
+    from app.agent.hazard import _booking_request, _schedule_pick, _slot_shaped, prepare
+
+    prepared = prepare(raw)
+    if _slot_shaped(raw) or _schedule_pick(raw) or _schedule_pick(prepared):
+        return True
+    if _booking_request(prepared) or _booking_request(raw):
+        return True
+    return False
+
+
 def safety_decision(text: str) -> str:
     """How to treat an answer to the safety question.
 
@@ -778,6 +800,9 @@ def safety_decision(text: str) -> str:
         return "page"
     if _SAFETY_YES.search(raw) or (_FLED.search(raw) and not _natural_no(raw)):
         return "page"
+    # A street, a bare slot, or a booking phrase is not a yes. It must not page.
+    if _slot_or_booking_answer(raw):
+        return "clear"
     if _hedge_or_urgency(raw):
         return "page"
     if _natural_no(raw):
@@ -1034,6 +1059,7 @@ def extract_issue(text: str) -> str | None:
         _physical_change,
         _sewage_active,
         _sounding_detector,
+        _water_on_power,
         prepare as prepare_hazard,
     )
 
@@ -1045,6 +1071,7 @@ def extract_issue(text: str) -> str | None:
         or _missed_hazard_shape(prepared)
         or _comfort_bundle(prepared)
         or _physical_change(prepared)
+        or _water_on_power(prepared)
     ):
         return None
     padded = f" {_fold_latin(normalize(text)).replace('heeder', 'heater').replace('heder', 'heater')} "

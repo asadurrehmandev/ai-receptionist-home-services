@@ -130,10 +130,10 @@ def test_non_english_sewage_pages_without_the_english_menu():
 def test_a_vague_turn_is_not_stored_and_a_clean_no_offers_a_callback():
     engine = _engine()
     state = SessionState()
-    first = engine.handle(state, "I cannot quite say what is going on.")
+    first = engine.handle(state, "It is difficult to describe from the driveway.")
     assert state.issue is None
     assert "what's going on" in first.say.lower()
-    second = engine.handle(state, "Hard to put into words.")
+    second = engine.handle(state, "blah blah blah")
     assert state.issue is None
     assert "danger" in second.say.lower()
     assert "what's going on" not in second.say.lower()
