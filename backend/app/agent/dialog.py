@@ -187,6 +187,9 @@ class Dialog:
             and _RANK.get(local[0], 0) >= _RANK["ask"]
         ):
             state.hazard = label
+            # Keep the utterance. The label "Active water" is shared with a
+            # flood, and the spoken line is chosen from these words.
+            state.hazard_text = raw
         if (
             state.hazard
             or wants_human(raw)
@@ -273,7 +276,9 @@ class Dialog:
             if state.hazard or state.outcome in _COMMITTED:
                 break
         if state.hazard:
-            return self.engine._escalate(state, perf_counter(), state.hazard)
+            return self.engine._escalate(
+                state, perf_counter(), state.hazard, source=state.hazard_text or text
+            )
         if committed is not None:
             return committed
         if speak_failed:
@@ -319,7 +324,9 @@ class Dialog:
             if not allowed:
                 return {"ok": False, "error": "Transfer is only for a hazard or a caller who asked for a person."}, "", None
             reason = state.hazard or "Caller requested a person"
-            result = self.engine._escalate(state, perf_counter(), reason)
+            result = self.engine._escalate(
+                state, perf_counter(), reason, source=state.hazard_text or utterance
+            )
             return {"ok": True, "say": result.say, "reason": reason}, result.say, result
         if name == "speak":
             return self._speak(state, utterance, payload)

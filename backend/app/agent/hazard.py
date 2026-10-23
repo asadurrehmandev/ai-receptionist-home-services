@@ -25,7 +25,7 @@ _HISTORICAL = re.compile(
     r"we fixed|used to|was already|had already|already stopped|"
     r"last summer|last fall|last autumn|last spring|over the winter|during the winter|"
     r"this past winter|previous winter|was serviced|had it serviced|seasonal maintenance|"
-    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holiday|"
+    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holidays?|"
     r"fourth of july|labor day|memorial day)\b",
     re.I,
 )
@@ -596,9 +596,17 @@ def _compose_definite(text: str) -> tuple[str, str] | None:
     return None
 
 
+_CEILING_FAN = re.compile(
+    r"\bceiling\s+fans?\b|"
+    r"\bventilador(?:es)?(?:\s+fan)?\s+de\s+techo\b|"
+    r"\bventilador(?:es)?(?:\s+fan)?\s+do\s+teto\b",
+    re.I,
+)
+
+
 def _ceiling_fan_water(text: str) -> bool:
     """Water leaving a ceiling fan. A room name may sit between the two."""
-    if not re.search(r"\bceiling\s+fans?\b", text or "", re.I):
+    if not _CEILING_FAN.search(text or ""):
         return False
     if not _WATER_MOTION.search(text or ""):
         return False
@@ -608,7 +616,9 @@ def _ceiling_fan_water(text: str) -> bool:
         re.search(
             r"\b(?:off|from|out of)\b(?:\s+\w+){0,8}\s+ceiling\s+fans?\b|"
             r"\bceiling\s+fans?\b(?:\s+\w+){0,6}\s+(?:is\s+|are\s+)?(?:dripp\w*|leak\w*|running|pouring)\b|"
-            r"\b(?:dripp\w*|leak\w*|running|pouring)\b(?:\s+\w+){0,6}\s+(?:off|from|onto)\b",
+            r"\b(?:dripp\w*|leak\w*|running|pouring)\b(?:\s+\w+){0,6}\s+(?:off|from|onto)\b|"
+            r"\bventilador(?:es)?(?:\s+fan)?\s+de\s+techo\b(?:\s+\w+){0,8}\s+(?:est[aá]\s+)?(?:gote\w*|dripp\w*|leak\w*)\b|"
+            r"\bventilador(?:es)?(?:\s+fan)?\s+do\s+teto\b(?:\s+\w+){0,8}\s+(?:est[aá]\s+)?(?:ping\w*|gote\w*|dripp\w*|leak\w*)\b",
             text or "",
             re.I,
         )
@@ -714,7 +724,7 @@ _PAST_MARK = re.compile(
         r"was serviced|were serviced|had it serviced|was repaired|was fixed|was installed|was hooked up|"
         r"had a leak|had a gas|they repaired|"
     r"you came out|you were here|after the visit|earlier|already gone|gone quiet|has stopped|has reset|"
-    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holiday|"
+    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holidays?|"
     r"fourth of july|labor day|memorial day)\b",
     re.I,
 )
@@ -978,8 +988,11 @@ _FILL_PLACE = re.compile(
 )
 _DETECTOR_DEVICE = re.compile(r"\b(?:detectors?|alarms?|alarme|alarma)\b", re.I)
 _DETECTOR_HOWL = re.compile(
-    r"\b(?:howling|screaming|shrieking|blaring|wailing|yowl\w*|aull\w*|gritando|uivando|guinch\w*|baj raha)\b|"
-    r"\b(?:won't|wont|will not|would not|wouldn't|wouldnt|cannot|can't)\s+(?:quit|stop)\b",
+    r"\b(?:howling|screaming|shrieking|screech\w*|blaring|wailing|roaring|roars?|"
+    r"yowl\w*|aull\w*|gritando|uivando|guinch\w*|urrand\w*|chillar|chillando|chilla|baj raha)\b|"
+    r"\b(?:won't|wont|will not|would not|wouldn't|wouldnt|cannot|can't|doesn't|does not)\s+"
+    r"(?:quit|stop|let up)\b|"
+    r"\bno deja de\b",
     re.I,
 )
 # A howling person is not a detector. A unit, a box, a ceiling, or an alarm is.
@@ -988,7 +1001,10 @@ _HOWL_SOURCE = re.compile(
     r"\b(?:detectors?|alarms?|alarme|alarma|units?|devices?|apparatus|aparatos?|"
     r"something|ceiling|wall|techo|caja|unidad|unidades|sensors?|box(?:es)?|"
     r"closets?|attics?|crawlspaces?|mechanical|utility|air handlers?|handlers?|"
-    r"equipos?|exaustor(?:es)?|"
+    r"furnaces?|heaters?|boilers?|hvacs?|ducts?|registers?|blowers?|compressors?|"
+    r"machines?|equipment|"
+    r"equipos?|exaustor(?:es)?|aquecedor(?:es)?|calefactor(?:es)?|calderas?|sistemas?|"
+    r"ductos?|fornalhas?|equipamentos?|"
     r"returns?|grilles?|vents?|monitors?|rejillas?|grelhas?|retornos?|grades?)\b",
     re.I,
 )
@@ -998,7 +1014,13 @@ _ILLNESS = re.compile(
     r"short of breath|splitting head|head is splitting|"
     r"mareo|mareada|chakkar|nahihilo|tont[oa]s?|tontura|enjoad\w*)\b|"
     r"\bdolor de cabeza\b|\bduele(?:n)? la cabeza\b|\bdor de cabeca\b|"
-    r"\bme falta el aire\b|\bfalta de ar\b|\bsem folego\b",
+    r"\bme falta el aire\b|\bfalta de ar\b|\bsem folego\b|\bsem ar\b|"
+    r"\b(?:cannot|can't|cant) catch my breath\b|\bhard to breathe\b|"
+    r"\bdifficulty breathing\b|\b(?:cannot|can't|cant) breathe\b|"
+    r"\bchest\s+(?:feels?|is)\s+tight\b|\btight chest\b|"
+    r"\bfeel(?:s|ing)?\s+weak\b|"
+    r"\bme cuesta respirar\b|\bcuesta respirar\b|"
+    r"\b(?:blacked out|blacking out|unconscious|unresponsive)\b",
     re.I,
 )
 
@@ -1384,9 +1406,13 @@ def _carbon(clause: str) -> str | None:
 
 def _sewage_active(clause: str) -> bool:
     """Sewage that is moving. Textbook nouns and everyday dirty-water wording both count."""
-    if re.search(r"गंदा पानी|गन्दा पानी", clause) and re.search(r"आ रहा|ऊपर|वापस|नाली", clause):
+    if re.search(r"गंदा पानी|गन्दा पानी", clause) and re.search(
+        r"आ रहा|ऊपर|वापस|नाली|फैल|फर्श|बाथरूम", clause
+    ):
         return True
-    if re.search(r"گندا پانی", clause) and re.search(r"آ رہا|اوپر|واپس|نالے|نالی", clause):
+    if re.search(r"گندا پانی", clause) and re.search(
+        r"آ رہا|اوپر|واپس|نالے|نالی|پھیل|فرش|باتھ|کمرہ", clause
+    ):
         return True
     if re.search(r"مياه الصرف|مياه المجاري", clause) and not re.search(r"لا توجد|بدون", clause):
         return True
@@ -2674,7 +2700,9 @@ def _stricter(left: tuple[str, str | None], right: tuple[str, str | None]) -> tu
 _LOSS_I18N = re.compile(
     r"nao tem aquecimento|sem aquecimento|sem ar condicionado|"
     r"aquecedor parou|aquecedor quebrou|aquecedor nao liga|aquecedor nao funciona|"
+    r"aquecedor pifou|aquecedor morreu|aquecimento pifou|aquecimento morreu|"
     r"aquecimento parou|aquecimento nao|calor acabou|acabou o calor|parou de aquecer|"
+    r"nao esquenta|nao aquece|"
     r"nao liga o aquecedor|"
     r"walang init|walang aircon|"
     r"heater band|ac band|garmi nahi|thandak nahi|"
@@ -3254,11 +3282,27 @@ def _physical_change(text: str) -> bool:
     return True
 
 
+def _person_down(text: str) -> bool:
+    """Someone has lost consciousness. A drain in the same sentence is not a job."""
+    match = re.search(
+        r"\b(?:blacked out|blacking out|unconscious|unresponsive|passed out|collapsed)\b",
+        text or "",
+        re.I,
+    )
+    if not match or _negated_at(text or "", match.start()):
+        return False
+    if _PAST_MARK.search(text or "") and not _present_cue(text or ""):
+        return False
+    return True
+
+
 def _missed_hazard_shape(text: str) -> bool:
     """Dirty water or a howling unit the present-hazard check should already own.
 
     Used so a high head is not cleared when that check misses the wording.
     """
+    if _person_down(text):
+        return True
     if _sewage_active(text) or _sounding_detector(text) or _uncontrolled_water(text):
         return True
     if _gas_happening(text) or _fire_or_smoke(text) or _comfort_bundle(text):
@@ -3389,6 +3433,8 @@ def _policy_floor(text: str) -> tuple[str, str | None]:
         return "definite", "Carbon monoxide"
     if _uncontrolled_water_now(active):
         return "definite", "Active water"
+    if _person_down(active or text):
+        return "definite", "Hazard"
     if _co_alarm_and_symptom(text):
         return "definite", "Carbon monoxide"
     if _comfort_bundle(text):
@@ -3432,7 +3478,7 @@ _PAST_FRAME = re.compile(
     r"\b(?:last\s+(?:winter|spring|summer|fall|autumn|year|month|week)|"
     r"in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)|"
     r"months?\s+ago|years?\s+ago|"
-    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holiday|"
+    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holidays?|"
     r"fourth of july|labor day|memorial day)\b",
     re.I,
 )
@@ -3477,6 +3523,9 @@ def _past_and_dry(text: str) -> bool:
     for clause in _split_turn(text) or [text]:
         if not clause or _clause_away(clause):
             continue
+        # The holiday clause can name the old leak. It is not water happening now.
+        if _PAST_FRAME.search(clause) or _PAST_MARK.search(clause):
+            continue
         if _uncontrolled_water_now(clause) or _sewage_active(clause) or _sounding_detector(clause):
             return False
     return True
@@ -3494,6 +3543,102 @@ def _raised_live(text: str) -> bool:
     return False
 
 
+_JOB_FUNCTION = _FUNCTION_WORD | {
+    "there", "here", "into", "onto", "under", "over", "after", "before", "when",
+    "while", "our", "has", "have", "had", "been", "its", "it's", "i'm", "im", "about",
+    "than", "one", "per", "minute", "little", "bit", "very", "really", "still",
+    "out", "off", "down", "back", "do", "does", "did", "can", "could", "would",
+    "should", "will", "wont", "won't", "cannot", "keep", "keeps", "keeping",
+    "get", "got", "me", "us", "them", "he", "she", "they", "his", "her", "their",
+    "some", "any", "also", "too", "if", "then", "because", "during", "inside",
+    "outside", "near", "by", "these", "those", "what", "which", "who", "how",
+    "already", "again", "now", "today", "being", "since", "ago", "yesterday",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "weekend", "morning", "tonight", "hi", "hello", "calling",
+}
+_JOB_WORD = {
+    "kitchen", "bath", "bathroom", "hall", "hallway", "guest", "powder", "laundry",
+    "basement", "upstairs", "downstairs", "master", "utility", "room", "house",
+    "home", "garage", "yard", "outdoor", "floor",
+    "toilet", "faucet", "faucets", "sink", "sinks", "lavatory", "shower",
+    "showerhead", "spigot", "drain", "drains", "tub", "tubs", "bathtub",
+    "disposal", "garbage", "aerator", "basin", "vanity", "spout", "bib",
+    "hose", "softener", "sump", "pump", "filter", "filters", "sprinkler",
+    "sensor", "exhaust", "fan", "cartridge", "flange", "trap", "stopper",
+    "handle", "valve", "head", "heads", "washer", "wash", "washing", "water",
+    "heater", "heaters", "tank", "tankless", "thermostat",
+    "leak", "leaking", "leaks", "leaked", "drip", "dripping", "drips",
+    "weep", "weeping", "seep", "seeping", "running", "runs", "run",
+    "clog", "clogged", "clogs", "clogging", "slow", "slowly", "sluggish",
+    "jammed", "jamming", "draining", "drained", "backed", "backing", "backup",
+    "humming", "hums", "hum", "spinning", "spin", "noisy", "noise", "loud",
+    "empty", "empties", "emptying", "forever", "long", "takes", "taking", "time",
+    "gurgle", "gurgles", "gurgling", "wobble", "wobbles", "wobbling",
+    "stiff", "hard", "turn", "broken", "drop", "drops", "flush", "pressure",
+    "low", "slight", "steady", "caulk", "caulking", "recaulk", "recaulked",
+    "installed", "install", "look", "tech", "need", "needs", "want", "wants",
+    "someone", "making", "banging", "bang", "bangs", "popping", "pop", "pops",
+    "started", "start", "week", "dry", "shut", "air", "handler", "dirty",
+    "dusty", "mechanical", "closet", "locked", "myself", "blowing", "warm",
+    "ac", "found", "google",
+}
+
+
+def _without_contact_frame(original: str) -> str:
+    """Drop a name, a phone, a street, or a how-did-you-hear phrase.
+
+    What remains has to be the job. A hazard word is not part of that frame.
+    """
+    blob = original or ""
+    blob = re.sub(r"\+?\d[\d\-\.\(\)\s]{6,}\d", " ", blob)
+    blob = re.sub(r"\b\d{5}(?:-\d{4})?\b", " ", blob)
+    blob = re.sub(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", " ", blob)
+    blob = re.sub(r"\b(?:found you on google|on google|google|yelp|nextdoor)\b", " ", blob, flags=re.I)
+    blob = re.sub(
+        r"\b(?:my phone(?: number)? is|the address is|phone|address|austin|texas)\b",
+        " ",
+        blob,
+        flags=re.I,
+    )
+    blob = re.sub(r"\b(?:the )?earliest(?: window)?\b|\bsoonest\b", " ", blob, flags=re.I)
+    return blob
+
+
+def _leftover_outside_job(text: str) -> bool:
+    """A word that is not the fixture, the drain, or the catalogue job itself."""
+    allowed = _JOB_FUNCTION | _JOB_WORD | _FILLER_WORD
+    return any(word not in allowed for word in _content_words(text))
+
+
+def _job_is_the_whole_turn(text: str, original: str | None = None) -> bool:
+    """A drip, fixture, tub, drain, or catalogue job, and nothing left over.
+
+    A name, a phone, or a street may sit beside the job. Any other leftover
+    word is not cleared because a hazard list failed to name it.
+    """
+    reduced = prepare(_without_contact_frame(original or text))
+    if _leftover_outside_job(reduced):
+        return False
+    if (
+        _ceiling_fan_water(text)
+        or _water_on_power(text)
+        or _sewage_active(text)
+        or _sounding_detector(text)
+        or _gas_happening(text)
+        or _fire_or_smoke(text)
+        or _person_down(text)
+    ):
+        return False
+    return bool(
+        _ordinary_fixture(text)
+        or _slow_drain(text)
+        or _sink_backup(text)
+        or _catalogue_job(text)
+        or _plain_job(text)
+        or _routine_service(text)
+    )
+
+
 def _spanish_wait(original: str) -> bool:
     """A repair the caller says can wait. The fixture noun alone is not this."""
     folded = fold(original or "")
@@ -3505,10 +3650,9 @@ def _spanish_wait(original: str) -> bool:
 def _positive_routine(prepared: str, original: str) -> bool:
     """The only clearance that may zero a definite head.
 
-    The keep starts at the page cut. A drip, a fixture, a fan, or a leak
-    label is not a match while a howl, sewage, fan-water, or other present
-    hazard is in the sentence. The vague menu is not a match. A recognized
-    job may clear the head only after those checks find nothing.
+    The keep starts at the page cut. A drip, a fixture, a tub, a drain, or a
+    catalogue job is a match only when that job is the whole turn. Leftover
+    words are not a routine. A list miss is not a clearance.
     """
     if _physical_change(prepared) or _missed_hazard_shape(prepared):
         return False
@@ -3555,25 +3699,21 @@ def _positive_routine(prepared: str, original: str) -> bool:
         return True
     if _spanish_wait(original):
         return True
-    # A drip, a fixture, or a tub does not explain a head when the same turn
-    # still has a howl, an illness, an odor, sewage, sparks, or fan-water
-    # the lists did not already return for. A faucet leak with nothing else
-    # is a routine.
-    if _drip_fixture_or_tub(prepared) and _unexplained_beside_fixture(prepared):
-        return False
-    if _slow_drain(prepared) and not _unexplained_beside_fixture(prepared):
+    # The job has to be the whole turn. A word the hazard lists do not name
+    # is still leftover, so it cannot zero the head.
+    if _job_is_the_whole_turn(prepared, original):
         return True
-    if (_routine_context(prepared) or _sink_backup(prepared)) and not (
-        _drip_fixture_or_tub(prepared) and _unexplained_beside_fixture(prepared)
+    # A car with no fuel, a fee question, or a past repair can share the turn
+    # with a faucet. A sink that is merely backing up cannot hide leftover words.
+    if _routine_context(prepared) and not _sink_backup(prepared):
+        return True
+    if re.search(r"\blocked myself\b", prepared, re.I) and not _leftover_outside_job(prepared):
+        return True
+    if (
+        re.search(r"\bfilters?\b", prepared, re.I)
+        and re.search(r"\b(?:dirty|dusty|change|replace)\b", prepared, re.I)
+        and not _leftover_outside_job(prepared)
     ):
-        return True
-    if _ordinary_fixture(prepared) and not _unexplained_beside_fixture(prepared):
-        return True
-    if _catalogue_job(prepared) or _plain_job(prepared) or _routine_service(prepared):
-        return True
-    if re.search(r"\blocked myself\b", prepared, re.I):
-        return True
-    if re.search(r"\bfilters?\b", prepared, re.I) and re.search(r"\b(?:dirty|dusty|change|replace)\b", prepared, re.I):
         return True
     return False
 
@@ -3749,16 +3889,22 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         # head. If that check misses, page or ask. Do not collect a name.
         if _positive_routine(prepared, text):
             head = ("none", None)
+        elif rules[0] == "definite" or floor[0] == "definite":
+            pass
+        elif _physical_change(prepared) or _vague_menu_turn(prepared, text):
+            head = ("ask", "Uncertain hazard")
         elif (
             _drip_fixture_or_tub(prepared)
-            and _unexplained_beside_fixture(prepared)
-            and rules[0] != "definite"
-            and floor[0] != "definite"
+            or _slow_drain(prepared)
+            or _ordinary_fixture(prepared)
+            or _sink_backup(prepared)
+            or _catalogue_job(prepared)
+            or _plain_job(prepared)
+            or _routine_service(prepared)
         ):
-            # The lists did not explain this head. A drip, a fixture, or a tub
-            # must not book it, and must not turn the leftover words into a paid page.
-            head = ("ask", "Uncertain hazard")
-        elif _physical_change(prepared) or _vague_menu_turn(prepared, text):
+            # Present-hazard did not positively match a routine. A drip, a
+            # fixture, a drain, or a catalogue word must not book the call
+            # and must not turn the leftover words into a paid page.
             head = ("ask", "Uncertain hazard")
         else:
             pass

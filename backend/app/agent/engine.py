@@ -70,6 +70,7 @@ class SessionState:
     last_caller_text: str | None = None
     last_reply: str | None = None
     hazard: str | None = None
+    hazard_text: str | None = None
     verified: bool = False
     verify_last4: str | None = None
     verify_day: str | None = None
@@ -317,7 +318,9 @@ class Engine:
             return self._unclear_handoff(state, raw, started)
 
         if state.hazard:
-            return self._escalate(state, started, state.hazard)
+            # Dialog stores the rules label, then hands the turn here. The label
+            # "Active water" is also a flood. The caller's words pick the line.
+            return self._escalate(state, started, state.hazard, source=state.hazard_text or raw)
 
         spoken = raw
         level, emergency = assess_caller_turn(spoken)
@@ -341,6 +344,7 @@ class Engine:
             state.intent = "emergency"
             state.issue = emergency
             state.hazard = emergency
+            state.hazard_text = spoken
             return self._escalate(state, started, emergency, source=spoken)
         if level == "ask":
             prior_name = state.name
@@ -1042,12 +1046,13 @@ class Engine:
             level_now, emergency_now = assess_caller_turn(raw)
         if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
             state.hazard = emergency_now
+            state.hazard_text = raw
             self._fill(state, raw)
-            return self._escalate(state, started, state.hazard)
+            return self._escalate(state, started, state.hazard, source=raw)
         if decision == "page":
             state.hazard = "Caller confirmed danger"
             self._fill(state, raw)
-            return self._escalate(state, started, state.hazard)
+            return self._escalate(state, started, state.hazard, source=state.hazard_text or raw)
         self._fill(state, raw)
         if decision == "callback" or on_clear == "callback":
             return self._office_callback(state, started)
@@ -1081,12 +1086,13 @@ class Engine:
             level_now, emergency_now = assess_caller_turn(raw)
         if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
             state.hazard = emergency_now
+            state.hazard_text = raw
             self._fill(state, raw)
-            return self._escalate(state, started, state.hazard)
+            return self._escalate(state, started, state.hazard, source=raw)
         if decision == "page":
             state.hazard = "Caller confirmed danger"
             self._fill(state, raw)
-            return self._escalate(state, started, state.hazard)
+            return self._escalate(state, started, state.hazard, source=state.hazard_text or raw)
         if decision == "callback":
             self._fill(state, raw)
             return self._office_callback(state, started)
@@ -1176,6 +1182,8 @@ class Engine:
     def _escalate(self, state: SessionState, started: float, reason: str, source: str = "") -> TurnResult:
         state.outcome = "escalated"
         state.phase = "closed"
+        if not (source or "").strip():
+            source = state.hazard_text or ""
         who = self.config.on_call_name
         comfort = _comfort_hazard(reason, source)
         fee = self.config.emergency_dispatch_usd

@@ -498,13 +498,28 @@ def _person_name_only(text: str) -> bool:
     return True
 
 
+_SEM_CACHE: dict[str, tuple[str, str | None]] = {}
+
+
 def semantic_hazard(text: str) -> tuple[str, str | None]:
     """Return ('definite'|'ask'|'none', label). Empty and tiny strings are none.
 
     A missing model asks a person to judge the call. It does not report 'no hazard'.
     A turn that is only a person name is not compared with hazard prototypes.
+    The same utterance is embedded once. A second screen in the same turn reuses it.
     """
     cleaned = " ".join((text or "").split())
+    cached = _SEM_CACHE.get(cleaned)
+    if cached is not None:
+        return cached
+    result = _semantic_hazard(cleaned)
+    if len(_SEM_CACHE) > 64:
+        _SEM_CACHE.clear()
+    _SEM_CACHE[cleaned] = result
+    return result
+
+
+def _semantic_hazard(cleaned: str) -> tuple[str, str | None]:
     if len(cleaned) < 8 or _person_name_only(cleaned):
         return "none", None
     if _load_failed:

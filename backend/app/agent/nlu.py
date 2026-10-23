@@ -252,6 +252,13 @@ SPANISH_HINTS = (
     "equipo",
     "cena",
     "mareada",
+    "calefactor",
+    "gotea",
+    "goteando",
+    "chillar",
+    "chillando",
+    "ventilador",
+    "respirar",
 )
 
 

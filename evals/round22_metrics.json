@@ -1,0 +1,53 @@
+{
+  "heldout": "evals/round22_heldout_set.py",
+  "sha256": "86c0e4fb96853e828ece19ff0d9da229aefe17dbe637f3892bd47ac4fccdea83",
+  "lines": 51,
+  "desk": "http",
+  "thresholds": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.40
+  },
+  "thresholds_moved": false,
+  "source_default_page_min": 0.55,
+  "e2e_page_recall": "27/29",
+  "e2e_page_recall_rate": 0.931,
+  "false_pages": 0,
+  "false_page_denominator": 22,
+  "non_en_hazard": 19,
+  "non_en_hazard_english_menu": 0,
+  "non_en_hazard_no_menu": "19/19",
+  "booking_instruction_emergency_lines": 2,
+  "booking_instruction_emergency_false_pages": 0,
+  "booking_instruction_emergency_fee_quotes": 0,
+  "real_hazard_heads_at_or_above_page_cut_neither_page_nor_safety": 0,
+  "howling_illness_fresh_air": "5/6",
+  "howling_fresh_air_miss": "The tub drips and my chest feels tight in that same bathroom. (0.788) asks safety. There is no howl, so the fresh-air line is not used.",
+  "sewage_stay_away": "9/10",
+  "sewage_valve": 0,
+  "sewage_stay_away_miss": "The floor drain is slow and I blacked out in the corridor. Pages the hurt line, not the water valve.",
+  "emergencies_under_page_cut_still_paged_by_rules": [
+    "O aquecedor está urrando e tenho falta de ar, e a pia pinga. (0.532)",
+    "A idosa está com frio e o aquecimento não esquenta a casa. (0.364)"
+  ],
+  "asked_not_paged": [
+    "The tub drips and my chest feels tight in that same bathroom. (0.788)",
+    "The kitchen sink is leaking and the breaker keeps tripping. (0.606)"
+  ],
+  "by_family_e2e": {
+    "co": "5/6",
+    "electrical": "4/5",
+    "sewage": "10/10",
+    "gas": "4/4",
+    "comfort": "3/3",
+    "flood": "1/1"
+  },
+  "fresh": {
+    "transfer": "36/36",
+    "advice": "8/8",
+    "routine": "68/68"
+  },
+  "pytest": "331 passed, 4 warnings",
+  "bar_cleared": false
+}

@@ -75,13 +75,27 @@ def last_latency_ms() -> float | None:
     return _last_ms
 
 
+_NLI_CACHE: dict[str, tuple[str, str | None]] = {}
+
+
 def nli_opinion(text: str) -> tuple[str, str | None]:
     """Return ('definite'|'ask'|'none'|'unavailable', label).
 
     High entailment can page. Medium entailment only asks. A missing model
-    does not invent a clearance.
+    does not invent a clearance. A repeated utterance reuses the last score.
     """
     cleaned = " ".join((text or "").split())
+    cached = _NLI_CACHE.get(cleaned)
+    if cached is not None:
+        return cached
+    result = _nli_opinion(cleaned)
+    if len(_NLI_CACHE) > 64:
+        _NLI_CACHE.clear()
+    _NLI_CACHE[cleaned] = result
+    return result
+
+
+def _nli_opinion(cleaned: str) -> tuple[str, str | None]:
     if len(cleaned) < 8:
         return "none", None
     if _load_failed:
