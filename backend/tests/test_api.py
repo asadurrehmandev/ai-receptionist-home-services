@@ -62,7 +62,7 @@ def test_health_reports_rule_brain(client):
     assert body["reply_mode"] == "demo"
     assert body["llm_provider"] is None
     assert body["media_stream_ready"] is False
-    assert "Northline" in body["business"]
+    assert "Porter" in body["business"]
 
 
 def test_demo_call_books_and_logs_webhook(client):
@@ -111,7 +111,7 @@ def test_twilio_gather_escalates_with_dial(client):
     assert "<Gather" in xml
     assert 'timeout="5"' in xml
     assert 'actionOnEmptyResult="true"' in xml
-    assert "Northline Plumbing" in xml
+    assert "Porter Plumbing" in xml
     assert "<Stream" not in xml
     gathered = client.post(
         "/api/voice/twilio/gather",

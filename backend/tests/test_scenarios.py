@@ -440,7 +440,7 @@ def _run(scenario: dict):
     engine = Engine(CONFIG, calendar, clock)
     state = SessionState()
     greeting = engine.greeting(state)
-    assert "northline plumbing" in greeting.say.lower()
+    assert "porter plumbing" in greeting.say.lower()
     assert "riley" in greeting.say.lower()
     assert "virtual receptionist" in greeting.say.lower()
     says = [greeting.say]

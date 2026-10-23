@@ -70,12 +70,17 @@ export function Simulator() {
   const [showTimings, setShowTimings] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [pinned, setPinned] = useState(true);
+  const [shopName, setShopName] = useState("Porter Plumbing & HVAC");
   const scroller = useRef<HTMLDivElement>(null);
   const callIdRef = useRef<string | null>(null);
   const generation = useRef(0);
   const mutedRef = useRef(false);
   const prevFields = useRef<Record<string, string>>({});
   const script = SCRIPTS.find((item) => item.id === scriptId) || SCRIPTS[0];
+
+  useEffect(() => {
+    api.health().then((health) => setShopName(health.business)).catch(() => undefined);
+  }, []);
 
   async function typeReply(text: string, latency?: number | null) {
     const token = ++generation.current;
@@ -331,7 +336,7 @@ export function Simulator() {
               <span className="text-xs font-medium text-muted-foreground">Ready</span>
             )}
             <span className="font-mono text-xs tabular-nums text-subtle">{formatElapsed(elapsed)}</span>
-            <span className="truncate text-sm font-medium">Northline Plumbing</span>
+            <span className="truncate text-sm font-medium">{shopName}</span>
             <span className="text-xs text-subtle">{PHASE_LABEL[turn?.phase || "discover"] || turn?.phase}</span>
             {speaking && <span className="text-xs text-muted-foreground">Speaking</span>}
           </div>

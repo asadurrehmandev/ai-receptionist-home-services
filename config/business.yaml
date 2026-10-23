@@ -1,7 +1,7 @@
 # Swap this file (or set BUSINESS_CONFIG) to retarget the receptionist
 # at another plumbing or HVAC shop. The rules and price bands below are for that trade.
 business:
-  name: Northline Plumbing & HVAC
+  name: Porter Plumbing & HVAC
   agent_name: Riley
   trade: Plumbing and HVAC
   phone_display: "(512) 555-0142"

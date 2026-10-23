@@ -95,7 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         stop_purge.set()
         store.close()
 
-    app = FastAPI(title="AI Receptionist for Home Services", lifespan=lifespan)
+    app = FastAPI(title="Porter", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(settings.cors_origins),

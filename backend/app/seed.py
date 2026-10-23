@@ -159,7 +159,13 @@ def _plant_day(service) -> list[dict]:
             hazard="Burst pipe" if row["outcome"] == "escalated" else None,
         )
         service.store.create_call(row["id"], row["channel"], None, row["start"], state)
-        service.store.add_turn(row["id"], "agent", "Thank you for calling Northline Plumbing. What's going on?", 3.2, row["start"])
+        service.store.add_turn(
+            row["id"],
+            "agent",
+            f"Thank you for calling {service.config.name}. What's going on?",
+            3.2,
+            row["start"],
+        )
         service.store.add_turn(row["id"], "caller", row["caller"], None, row["start"] + timedelta(seconds=20))
         service.store.add_turn(row["id"], "agent", row["reply"], 6.4, end)
         service.store.save_state(row["id"], state, ended=True, ended_at=end)

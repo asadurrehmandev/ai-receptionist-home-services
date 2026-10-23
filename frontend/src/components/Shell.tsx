@@ -29,7 +29,7 @@ const TITLES: Record<string, string> = {
 
 function titleFor(pathname: string) {
   if (pathname.startsWith("/calls/")) return "Call";
-  return TITLES[pathname] || "Northline";
+  return TITLES[pathname] || "Porter";
 }
 
 export function Shell() {
@@ -119,7 +119,7 @@ function Brand() {
       <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
         <Phone className="h-4 w-4" />
       </span>
-      <span className="hidden text-sm font-semibold lg:inline">Northline</span>
+      <span className="hidden text-sm font-semibold lg:inline">Porter</span>
     </div>
   );
 }

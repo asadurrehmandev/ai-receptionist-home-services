@@ -1,10 +1,12 @@
-# AI Receptionist for Home Services
+# Porter
+
+**Phone receptionist for home services — book, capture, dispatch board.**
 
 Runs out of the box in Demo mode with sample responses; paste your own Anthropic or OpenAI key (never stored) to test the live AI.
 
 A dispatch desk that picks up when the shop cannot. Built as a client demo for **Asad Rehman**, AI agent developer: the receptionist qualifies a plumbing or HVAC call, books the job, and hands real emergencies to a person.
 
-The sample shop is **Northline Plumbing & HVAC** in Austin. Riley answers. Miguel Santos is on call at +1 512-555-0199. The sample rules are for plumbing and HVAC. They are not a towing, dental, or med-spa agent.
+The sample shop is **Porter Plumbing & HVAC** in Austin. Riley answers. Miguel Santos is on call at +1 512-555-0199. The sample rules are for plumbing and HVAC. They are not a towing, dental, or med-spa agent.
 
 ## The problem
 
@@ -392,7 +394,7 @@ Environment variables are listed in `.env.example`. None are required for the lo
 
 ## Suggested portfolio line
 
-**Title:** AI Receptionist that answers, qualifies, and books plumbing and HVAC calls
+**Title:** Porter — phone receptionist for home services (book, capture, dispatch board)
 
 **Description:** Missed calls are lost jobs. This receptionist picks up for a plumbing and HVAC shop, qualifies the caller, and books a real window on the shop calendar. With no API key the hazard screen is a logistic head on multilingual-e5-large (`classifier: e5-head`). Hand rules can raise that level. A recognized routine clearance can block a head page. The optional understander is `off` until an API key is set. The screen runs on every caller turn before the name or phone is stored. Spanish routine calls book. Other languages get a hazard check and a callback. A confirmation text goes out only when Twilio SMS accepts it. It demos in the browser with no API keys. With an Anthropic key, Claude can raise a hazard and can choose an empathy id and tools; that live path has not been scored. Caller-facing words come from server templates. The same webhook answers a Twilio number when you are ready.
 

@@ -1,1 +1,1 @@
-"""Northline AI receptionist."""
+"""Porter AI receptionist for home services."""
