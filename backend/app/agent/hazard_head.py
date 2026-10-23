@@ -342,30 +342,38 @@ def _family(text: str) -> str:
     folded = (text or "").lower()
     if any(word in folded for word in ("monox", "carbon", "co alarm", "co detector", "dolor de cabeza", "dard")):
         return "Carbon monoxide"
-    if any(word in folded for word in ("spark", "chispa", "smoke", "humo", "dhuan", "faísca", "faisca", "شرار")):
+    if any(word in folded for word in ("spark", "chispa", "smoke", "humo", "dhuan", "faísca", "faisca", "fumaca", "fumaça", "شرار")):
         return "Electrical hazard"
     if "चिंगार" in (text or "") or "شرار" in (text or ""):
         return "Electrical hazard"
-    if any(word in folded for word in ("sewage", "sewer", "aguas negras", "esgoto", "maruming", "ganda pani")):
+    if any(
+        word in folded
+        for word in (
+            "sewage", "sewer", "aguas negras", "agua sucia", "agua podrida", "agua suja", "agua podre",
+            "esgoto", "maruming", "maduming", "ganda pani", "ganda paani", "coladera",
+        )
+    ):
         return "Sewage"
     if any(token in (text or "") for token in ("गंदा पानी", "گندا پانی", "مياه الصرف", "مياه المجاري")):
         return "Sewage"
-    if any(word in folded for word in ("howling", "shrieking", "baj raha")) and any(
-        word in folded for word in ("detector", "alarm", "dizzy", "nause", "headache", "chakkar")
+    if any(word in folded for word in ("howling", "screaming", "shrieking", "aullando", "gritando", "uivando", "baj raha")) and any(
+        word in folded for word in ("detector", "alarm", "unit", "aparato", "dizzy", "nause", "headache", "sick", "cabeza", "chakkar", "faint", "tonta")
     ):
         return "Carbon monoxide"
     if any(
         word in folded
         for word in (
-            "heat", "heater", "furnace", "cooling", "calor", "aquecimento", "init",
-            "lamig", "garmi", "thand", "temperature", "हीटर", "ہیٹر", "تدفئة",
+            "heat", "heater", "furnace", "cooling", "calor", "aquecimento", "aquecedor", "calefaccion",
+            "init", "lamig", "garmi", "thand", "temperature", "gelada", "gelado",
+            "हीटर", "ہیٹر", "تدفئة",
         )
     ):
         if any(
             word in folded
             for word in (
-                "baby", "infant", "elderly", "newborn", "abuela", "dadi", "lola",
-                "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
+                "baby", "infant", "elderly", "newborn", "abuela", "dadi", "lola", "bebe", "bebê",
+                "nieto", "nieta", "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
+                "gelada", "gelado",
             )
         ):
             return "Unsafe indoor temperature"

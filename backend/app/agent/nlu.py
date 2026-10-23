@@ -220,6 +220,24 @@ SPANISH_HINTS = (
     "apellido",
     "direccion",
     "telefono",
+    "sucia",
+    "podrida",
+    "coladera",
+    "lavabo",
+    "grados",
+    "nieto",
+    "nieta",
+    "aparato",
+    "pasillo",
+    "aullando",
+    "lunes",
+    "martes",
+    "miercoles",
+    "jueves",
+    "viernes",
+    "sabado",
+    "domingo",
+    "manana",
 )
 
 
@@ -331,9 +349,12 @@ _DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 _URDU_MARK = re.compile(r"[ٹڈڑںےھہ]")
 _ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
 _PT_HINTS = (
-    "torneira", "pingando", "agua", "água", "nao", "não", "cheiro", "fumaca", "fumaça",
+    "torneira", "pingando", "pinga", "agua", "água", "nao", "não", "cheiro", "fumaca", "fumaça",
     "faisca", "faísca", "esgoto", "quero", "manutencao", "manutenção", "cano", "vazamento",
     "lavanderia", "estudo", "estúdio", "agora", "ninguem", "ninguém",
+    "bebe", "bebê", "gelada", "gelado", "aquecedor", "banheiro", "cozinha", "ralo",
+    "suja", "podre", "estranha", "barulho", "perigo", "nenhum", "saindo", "interruptor",
+    "subindo", "devolve", "ovo",
 )
 _TL_HINTS = (
     "ngayon", "tubig", "usok", "amoy", "bahay", "kuryente", "bata", "mainit", "walang",
