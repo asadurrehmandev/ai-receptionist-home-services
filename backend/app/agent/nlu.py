@@ -238,6 +238,8 @@ SPANISH_HINTS = (
     "sabado",
     "domingo",
     "manana",
+    "inodoro",
+    "retrete",
 )
 
 
@@ -355,7 +357,8 @@ _PT_HINTS = (
     "bebe", "bebê", "gelada", "gelado", "aquecedor", "banheiro", "cozinha", "ralo",
     "suja", "podre", "estranha", "barulho", "perigo", "nenhum", "saindo", "interruptor",
     "subindo", "devolve", "ovo",
-    "nenem", "neném", "berco", "berço", "quarto", "frio", "aquecimento", "parou", "ficou",
+    "nenem", "neném", "berco", "berço", "bercinho", "quarto", "frio", "aquecimento", "parou", "ficou",
+    "crianca", "criança", "nene", "idoso", "idosa", "recem", "calor", "voce", "você",
 )
 _TL_HINTS = (
     "ngayon", "tubig", "usok", "amoy", "bahay", "kuryente", "bata", "mainit", "walang",
@@ -378,8 +381,31 @@ def _hint_count(text: str, hints: tuple[str, ...]) -> int:
     return sum(1 for hint in hints if re.search(rf"\b{re.escape(_fold_latin(hint))}\b", norm))
 
 
+def _portuguese_marked(text: str) -> bool:
+    """A Portuguese letter or a household word that Spanish does not use."""
+    if re.search(r"[ãõç]", text or "", re.I):
+        return True
+    folded = _fold_latin(normalize(text or ""))
+    return bool(
+        re.search(
+            r"\b(?:nao|nenem|nene|bercinho|berco|aquecimento|aquecedor|gelad\w*|"
+            r"crianca|idoso|idosa|recem|voce|obrigad\w*|torneira|esgoto|fumaca|pingand\w*)\b",
+            folded,
+        )
+    )
+
+
 def looks_portuguese(text: str) -> bool:
-    return _hint_count(text, _PT_HINTS) >= 2
+    if _hint_count(text, _PT_HINTS) >= 2:
+        return True
+    # A baby, a cold room, or heating can mark Portuguese before the short list is full.
+    if not _portuguese_marked(text):
+        return False
+    folded = _fold_latin(normalize(text or ""))
+    return bool(
+        re.search(r"\b(?:nenem|nene|crianca|idoso|idosa|recem|bebe|bercinho|berco)\b", folded)
+        and re.search(r"\b(?:frio|gelad\w*|calor|aquecimento|aquecedor)\b", folded)
+    )
 
 
 def looks_tagalog(text: str) -> bool:
@@ -407,6 +433,8 @@ def detect_language(text: str) -> str:
         return "ur"
     if _ARABIC_SCRIPT.search(raw):
         return "ar"
+    if _portuguese_marked(raw) and looks_portuguese(raw):
+        return "pt"
     if looks_spanish(raw):
         return "es"
     if looks_portuguese(raw):
@@ -1003,6 +1031,7 @@ def extract_issue(text: str) -> str | None:
         _comfort_bundle,
         _missed_hazard_shape,
         _present_hazard_clause,
+        _physical_change,
         _sewage_active,
         _sounding_detector,
         prepare as prepare_hazard,
@@ -1015,6 +1044,7 @@ def extract_issue(text: str) -> str | None:
         or _sewage_active(prepared)
         or _missed_hazard_shape(prepared)
         or _comfort_bundle(prepared)
+        or _physical_change(prepared)
     ):
         return None
     padded = f" {_fold_latin(normalize(text)).replace('heeder', 'heater').replace('heder', 'heater')} "

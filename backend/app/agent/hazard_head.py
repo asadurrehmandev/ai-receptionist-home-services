@@ -351,7 +351,7 @@ def _family(text: str) -> str:
         for word in (
             "sewage", "sewer", "aguas negras", "agua sucia", "agua podrida", "agua suja", "agua podre",
             "esgoto", "maruming", "maduming", "ganda pani", "ganda paani", "coladera",
-            "dirty water", "nasty water", "vaso sanitario",
+            "dirty water", "nasty water", "filthy water", "vaso sanitario", "agua marron", "retrete",
         )
     ):
         return "Sewage"
@@ -373,8 +373,9 @@ def _family(text: str) -> str:
             word in folded
             for word in (
                 "baby", "infant", "elderly", "newborn", "abuela", "dadi", "lola", "bebe", "bebê",
-                "nieto", "nieta", "nenem", "neném", "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
-                "gelada", "gelado", "frio", "berco", "berço",
+                "nieto", "nieta", "nenem", "neném", "crianca", "criança", "idoso", "idosa", "recem", "nene",
+                "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
+                "gelada", "gelado", "frio", "berco", "berço", "bercinho", "calor",
             )
         ):
             return "Unsafe indoor temperature"

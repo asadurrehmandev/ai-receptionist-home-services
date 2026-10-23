@@ -135,22 +135,27 @@ def test_spanish_address_accepts_number_last_and_then_stops_asking():
     assert last is not None and "oficina" in last.say.lower()
 
 
-def test_two_failed_issue_turns_ask_safety_then_a_separate_callback():
+def test_two_failed_issue_turns_callback_without_a_paid_page():
+    """Two misses on the issue are an office callback, the same bound as a name.
+
+    The second miss must not ask the safety question, because an unclear
+    answer there defaults to a page and quotes the emergency fee.
+    """
     engine = _engine()
     state = SessionState(phase="collect_issue", intent="new_job")
     first = engine.handle(state, "hmm")
     assert state.phase == "collect_issue"
     assert "more" in first.say.lower() or "más" in first.say.lower() or "mas" in first.say.lower()
     second = engine.handle(state, "hmm")
-    assert state.phase == "unclear_handoff"
-    assert "danger" in second.say.lower() or "peligro" in second.say.lower()
-    offered = engine.handle(state, "no")
-    assert state.outcome != "escalated"
-    assert state.phase == "callback_offer"
-    assert "call you back" in offered.say.lower() or "devuelva" in offered.say.lower()
-    booked = engine.handle(state, "yes")
     assert state.outcome == "callback"
+    assert state.outcome != "escalated"
+    assert state.phase == "closed"
     assert state.hazard is None
+    lowered = second.say.lower()
+    assert "call you back" in lowered or "devolverá" in lowered or "devolv" in lowered
+    assert "emergency dispatch" not in lowered
+    assert "tarifa de emergencia" not in lowered
+    assert "179" not in lowered
 
 
 def test_a_heldout_hazard_still_pages_end_to_end():

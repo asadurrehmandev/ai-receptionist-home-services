@@ -311,7 +311,7 @@ class Engine:
 
         spoken = raw
         level, emergency = assess_caller_turn(spoken)
-        from app.agent.hazard import _instruction_only, prepare
+        from app.agent.hazard import _instruction_only, _positive_routine, prepare
 
         if _instruction_only(prepare(spoken)) and level in {"ask", "definite"}:
             # Hazard words that live only inside a jailbreak sentence are not a page.
@@ -349,6 +349,7 @@ class Engine:
             and not plain_job_text(spoken)
             and not framed_entirely_away(spoken)
             and not confident_routine(spoken)
+            and not _positive_routine(prepare(spoken), spoken)
             and state.phase not in {"hazard_check", "unclear_handoff", "closed"}
         ):
             self._fill(state, spoken)
@@ -452,8 +453,9 @@ class Engine:
             if state.phase == "collect_issue" and not state.issue:
                 state.issue_rejects += 1
                 if state.issue_rejects >= 2:
-                    state.phase = "unclear_handoff"
-                    return self._finish(state, self._safety_prompt(state), started)
+                    # Same bound as a name: two misses become a callback.
+                    # A street address on this turn is not a yes and does not page.
+                    return self._slot_handoff(state, started, "problem", "problema")
                 return self._finish(
                     state,
                     self._line(state, "Tell me a bit more about what's going wrong.", "Cuénteme un poco más qué está fallando."),
@@ -594,7 +596,13 @@ class Engine:
                         state.name = guessed
         if state.phase == "collect_issue" and not state.issue:
             cleaned = " ".join(text.split())
-            if len(cleaned.split()) >= 3 and not is_spam(cleaned) and not names_neither_job_nor_hazard(text):
+            street_only = bool(extract_street(text)) and issue is None
+            if (
+                not street_only
+                and len(cleaned.split()) >= 3
+                and not is_spam(cleaned)
+                and not names_neither_job_nor_hazard(text)
+            ):
                 state.issue = cleaned[:80].rstrip(".")
 
     def _continue_intake(self, state: SessionState, text: str, started: float) -> TurnResult:
@@ -1435,30 +1443,29 @@ def _hazard_kind(reason: str | None, source: str = "") -> str:
     )
 
     folded = prepare(source or "")
+    label = (reason or "").lower()
+    # The caller's words pick the line before a generic water or hazard label.
     if folded and _sewage_active(folded):
         return "sewage"
-    label = (reason or "").lower()
+    if folded and _sounding_detector(folded):
+        return "carbon"
     if "temperature" in label or "comfort" in label:
         return "comfort"
     if "carbon" in label or "monoxide" in label:
         return "carbon"
     if "sewage" in label or "sewer" in label:
         return "sewage"
+    if folded and (_water_on_power(folded) or _fire_or_smoke(folded)):
+        return "electrical"
     if "electrical" in label:
         return "electrical"
+    if folded and _uncontrolled_water(folded):
+        return "water"
     if "water" in label or "flood" in label:
         return "water"
-    if label.strip() == "gas" or label.startswith("gas"):
+    if folded and (_gas_happening(folded) or _rotten_or_dizzy(folded)):
         return "gas"
-    if not folded:
-        return "other"
-    if _sounding_detector(folded):
-        return "carbon"
-    if _water_on_power(folded) or _fire_or_smoke(folded):
-        return "electrical"
-    if _uncontrolled_water(folded):
-        return "water"
-    if _gas_happening(folded) or _rotten_or_dizzy(folded):
+    if label.strip() == "gas" or label.startswith("gas"):
         return "gas"
     return "other"
 

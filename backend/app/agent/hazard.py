@@ -24,7 +24,9 @@ _HISTORICAL = re.compile(
     r"already fixed|was fixed|were fixed|already repaired|got it fixed|"
     r"we fixed|used to|was already|had already|already stopped|"
     r"last summer|last fall|last autumn|last spring|over the winter|during the winter|"
-    r"this past winter|previous winter|was serviced|had it serviced|seasonal maintenance)\b",
+    r"this past winter|previous winter|was serviced|had it serviced|seasonal maintenance|"
+    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holiday|"
+    r"fourth of july|labor day|memorial day)\b",
     re.I,
 )
 _CURRENT = re.compile(
@@ -156,7 +158,7 @@ _FIXTURE = re.compile(
 _VULNERABLE = re.compile(
     r"\b(elderly|infant|newborn|baby|babies|toddler|pregnant|oxygen|"
     r"grandma|grandpa|grandmother|grandfather|year-old|years old|"
-    r"bebe|bebé|nenem|ancian\w*|abuela|abuelo|niño|nino|niña|nina|nieto|nieta|neto|neta)\b",
+    r"bebe|bebé|nenem|nene|crianca|idoso|idosa|recem[-\s]?nascid\w*|ancian\w*|abuela|abuelo|niño|nino|niña|nina|nieto|nieta|neto|neta)\b",
     re.I,
 )
 _FREEZING = re.compile(r"\b(freezing|freeze|shivering|hypotherm\w*|congel\w*)\b", re.I)
@@ -443,7 +445,12 @@ def _contained_appliance_water(text: str) -> bool:
     """Water sitting in an appliance basin. Water leaving the appliance is not this."""
     if not _APPLIANCE_BASIN.search(text):
         return False
-    if _LEAVING_APPLIANCE.search(text) or _PRESENT_DANGER.search(text) or _sewage_active(text):
+    if _PRESENT_DANGER.search(text) or _sewage_active(text):
+        return False
+    # Overflow that stays in the freezer or the ice bin has not left the appliance.
+    if re.search(r"\b(?:into|in)\s+the\s+(?:freezer|ice ?bin|bin|drawer)\b", text, re.I):
+        return True
+    if _LEAVING_APPLIANCE.search(text):
         return False
     if not re.search(r"\b(water|standing|sitting|pooled|puddl\w*|wet|agua)\b", text):
         return False
@@ -665,7 +672,9 @@ _PAST_MARK = re.compile(
     r"years ago|months ago|a couple of years back|years back|yesterday|"
         r"was serviced|were serviced|had it serviced|was repaired|was fixed|was installed|was hooked up|"
         r"had a leak|had a gas|they repaired|"
-    r"you came out|you were here|after the visit|earlier|already gone|gone quiet|has stopped|has reset)\b",
+    r"you came out|you were here|after the visit|earlier|already gone|gone quiet|has stopped|has reset|"
+    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holiday|"
+    r"fourth of july|labor day|memorial day)\b",
     re.I,
 )
 _IF_EVER = re.compile(
@@ -713,7 +722,8 @@ _INSTRUCTION = re.compile(
     r"system\s*:|escalate (?:this|the) (?:call|visit)|priority override|"
     r"this (?:call|one|visit) is (?:an? )?(?:[\w]+\s+){0,3}emergenc|"
     r"say (?:that )?there(?:'s| is) (?:a |an )?(?:fire|gas|emergency)|"
-    r"tell (?:them|him|her|the desk|everyone) (?:it(?:'s| is)|there(?:'s| is)|that it(?:'s| is)) (?:a |an )?(?:fire|gas|emergency))\b",
+    r"tell (?:them|him|her|the desk|everyone) (?:it(?:'s| is)|there(?:'s| is)|that it(?:'s| is)) (?:a |an )?(?:fire|gas|emergency)|"
+    r"declar(?:e|ar)\b.{0,40}\b(?:fire|incendio|emergenc\w*))\b",
     re.I,
 )
 
@@ -935,7 +945,8 @@ _DETECTOR_HOWL = re.compile(
 # A hall by itself is not a source, so kids screaming in the hall stay a noise.
 _HOWL_SOURCE = re.compile(
     r"\b(?:detectors?|alarms?|alarme|alarma|units?|devices?|apparatus|aparatos?|"
-    r"something|ceiling|wall|techo|caja|unidad|unidades|sensors?|box(?:es)?)\b",
+    r"something|ceiling|wall|techo|caja|unidad|unidades|sensors?|box(?:es)?|"
+    r"closets?|attics?|crawlspaces?|mechanical|utility)\b",
     re.I,
 )
 _ILLNESS = re.compile(
@@ -1193,7 +1204,7 @@ def _negated_at(clause: str, index: int) -> bool:
         return False
     negations = {
         "no", "not", "without", "sin", "isn't", "isnt", "nothing", "never", "dont",
-        "nahi", "nahin", "walang", "nao", "sem", "nenhum", "nenhuma",
+        "nahi", "nahin", "walang", "nao", "sem", "nenhum", "nenhuma", "ni", "nem",
     }
     if any(word in negations for word in tail):
         return True
@@ -1344,9 +1355,9 @@ def _sewage_active(clause: str) -> bool:
         r"\b(?:voltando|subindo|saindo|transbord\w*|devolv\w*)\b", clause, re.I
     ):
         return True
-    if re.search(r"\bagua\s+(?:suja|podre|sucia|podrida)\b", clause, re.I) and re.search(
+    if re.search(r"\bagua\s+(?:suja|podre|sucia|podrida|marron|fea|turbia|hedionda|negra)\b", clause, re.I) and re.search(
         r"\b(?:ralo|desague|coladera|drenaje|devolv\w*|subindo|subiendo|saindo|no para|"
-        r"inodoro|vaso sanitario)\b",
+        r"inodoro|vaso sanitario|retrete|taza)\b",
         clause,
         re.I,
     ):
@@ -2525,7 +2536,8 @@ def _battery_advice(text: str) -> bool:
     chirp = re.search(r"\b(chirp\w*|pita\w*|pito)\b", text)
     if not chirp or not _CO_BATTERY.search(text):
         return False
-    if _SYMPTOM.search(text) or _unnegated(text, _CO_HARD):
+    # "Nobody feels sick" names the symptom only to deny it.
+    if _symptom_live(text) or _unnegated(text, _CO_HARD):
         return False
     return True
 
@@ -2602,7 +2614,7 @@ def _stricter(left: tuple[str, str | None], right: tuple[str, str | None]) -> tu
 _LOSS_I18N = re.compile(
     r"nao tem aquecimento|sem aquecimento|sem ar condicionado|"
     r"aquecedor parou|aquecedor quebrou|aquecedor nao liga|aquecedor nao funciona|"
-    r"aquecimento parou|aquecimento nao|"
+    r"aquecimento parou|aquecimento nao|calor acabou|acabou o calor|parou de aquecer|"
     r"nao liga o aquecedor|"
     r"walang init|walang aircon|"
     r"heater band|ac band|garmi nahi|thandak nahi|"
@@ -2612,7 +2624,7 @@ _LOSS_I18N = re.compile(
     re.I,
 )
 _PERSON_I18N = re.compile(
-    r"\b(dadi|dada|baccha|bachcha|buzurg|lola|lolo|sanggol|avo|avos|bebe|idoso|idosa|nieto|nieta|nenem)\b|"
+    r"\b(dadi|dada|baccha|bachcha|buzurg|lola|lolo|sanggol|avo|avos|bebe|idoso|idosa|nieto|nieta|nenem|nene|crianca|recem)\b|"
     r"दादी|दादा|बच्चा|बुजुर्ग|"
     r"دادی|دادا|بچہ|"
     r"جدتي|جدي|رضيع|مسن",
@@ -2621,7 +2633,8 @@ _PERSON_I18N = re.compile(
 _EXTREME_WORD = re.compile(
     r"bahut thand|bohot thand|bahut garmi|bohot garmi|"
     r"muito frio|muito calor|gelad[ao]s?|"
-    r"quarto.{0,24}frio|esta frio|frio e o aquecimento|"
+    r"quarto.{0,24}frio|esta frio|com frio|frio e o aquecimento|"
+    r"calor acabou|acabou o calor|"
     r"sobrang lamig|sobrang init|"
     r"बहुत ठंड|बहुत गर्मी|"
     r"بہت ٹھنڈ|بہت گرمی|"
@@ -3101,15 +3114,15 @@ def _booking_request(text: str) -> bool:
 
 
 _PHYSICAL_CHANGE = re.compile(
-    r"\b(?:dark|damp|wet|brown|black|new|weird)\s+(?:mark|stain|spot|patch|circle)\b|"
-    r"\b(?:mark|stain|spot|patch|circle)\b.{0,48}\b(?:ceiling|wall|drywall|plaster)\b|"
-    r"\b(?:ceiling|wall|drywall|plaster)\b.{0,48}\b(?:mark|stain|spot|patch|circle)\b|"
+    r"\b(?:dark|damp|wet|brown|black|new|weird|pale)\s+(?:mark|stain|spot|patch|circle|ring|blotch)\b|"
+    r"\b(?:mark|stain|spot|patch|circle|ring|blotch)\b.{0,48}\b(?:ceiling|wall|drywall|plaster)\b|"
+    r"\b(?:ceiling|wall|drywall|plaster)\b.{0,48}\b(?:mark|stain|spot|patch|circle|ring|blotch)\b|"
     r"\b(?:boiler|heater|furnace|water heater)\b.{0,56}\bknock\w*\b|"
     r"\bknock\w*\b.{0,56}\b(?:boiler|heater|furnace|water heater)\b|"
-    # A bang from a furnace or a boiler stays a question. A water heater that
-    # bangs or pops is still a booking, so this pattern does not name it.
-    r"\b(?:furnace|boiler)\b.{0,56}\bbang\w*\b|"
-    r"\bbang\w*\b.{0,56}\b(?:furnace|boiler)\b",
+    # A bang or a thump from a furnace or a boiler stays a question.
+    # A water heater that bangs or pops is still a booking, so it is not named here.
+    r"\b(?:furnace|boiler)\b.{0,56}\b(?:bang\w*|thump\w*)\b|"
+    r"\b(?:bang\w*|thump\w*)\b.{0,56}\b(?:furnace|boiler)\b",
     re.I,
 )
 
@@ -3321,11 +3334,14 @@ def _rotten_or_dizzy(text: str) -> bool:
 _PAST_FRAME = re.compile(
     r"\b(?:last\s+(?:winter|spring|summer|fall|autumn|year|month|week)|"
     r"in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)|"
-    r"months?\s+ago|years?\s+ago)\b",
+    r"months?\s+ago|years?\s+ago|"
+    r"christmas|thanksgiving|new year|easter|navidad|pascua|halloween|holiday|"
+    r"fourth of july|labor day|memorial day)\b",
     re.I,
 )
 _DRY_NOW = re.compile(
-    r"\b(?:dry now|is dry|are dry|everything is dry|all dry|dry today|it is dry)\b",
+    r"\b(?:dry now|is dry|are dry|everything is dry|all dry|dry today|it is dry|"
+    r"still dry|dried out|dried up|remains dry|stayed dry|stays dry)\b",
     re.I,
 )
 
@@ -3340,7 +3356,12 @@ def _denied_gas_and_smoke(text: str) -> bool:
     smoke = re.search(r"\b(?:smoke|humo|fumaca)\b", text, re.I)
     if not gas or not smoke:
         return False
-    if not _negated_at(text, gas.start()) or not _negated_at(text, smoke.start()):
+    local = _negated_at(text, gas.start()) and _negated_at(text, smoke.start())
+    # "No hay … ni …" can put the second noun outside the five-word window.
+    listed = bool(
+        re.search(r"\b(?:no|sin|sem|nao)\b", text, re.I) and re.search(r"\b(?:ni|nem)\b", text, re.I)
+    )
+    if not local and not listed:
         return False
     spark = re.search(r"\b(?:sparks?|sparking|chispas?|arcing)\b", text, re.I)
     if spark and not _negated_at(text, spark.start()):
@@ -3387,8 +3408,8 @@ def _spanish_wait(original: str) -> bool:
 def _positive_routine(prepared: str, original: str) -> bool:
     """The only clearance that may zero a head at or above 0.80.
 
-    A fixture word, a drip, the word emergency, or Spanish intent alone is
-    not a match. Present-hazard has to have found no hazard first.
+    A benign-home word, a fixture, a drip, the word emergency, or Spanish
+    intent alone is not a match. Present-hazard has to have found no hazard first.
     """
     if _physical_change(prepared) or _missed_hazard_shape(prepared):
         return False
@@ -3425,7 +3446,6 @@ def _positive_routine(prepared: str, original: str) -> bool:
         or _only_negated_gas(prepared)
         or _seasonal_dust(prepared)
         or _mild_comfort_only(prepared)
-        or _benign_home_talk(prepared)
         or _contained_appliance_water(prepared)
         or framed_entirely_away(prepared)
         or framed_entirely_away(original)
@@ -3550,6 +3570,8 @@ def names_neither_job_nor_hazard(text: str) -> bool:
     prepared = prepare(raw)
     if _present_hazard_clause(prepared) or _uncontrolled_water(prepared) or _sounding_detector(prepared):
         return False
+    if _physical_change(prepared):
+        return True
     if _sewage_active(prepared) or _gas_happening(prepared) or _fire_or_smoke(prepared):
         return False
     if _plain_job(prepared) or _catalogue_job(prepared) or _ordinary_fixture(prepared):
