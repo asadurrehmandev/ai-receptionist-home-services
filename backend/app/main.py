@@ -582,36 +582,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def _missed_guidance(hazard: str | None, spanish: bool, language: str | None = None) -> str:
-    label = (hazard or "").lower()
+    from app.agent.engine import _LEAVE, _WARM, _hazard_kind
+
     lang = language or ("es" if spanish else "en")
-    if "carbon" in label:
-        return {
-            "es": "Saquen a todos afuera, al aire libre, y llamen al 911.",
-        }.get(lang, "Get everyone outside into fresh air and call 911.")
-    if "water" in label or "flood" in label:
-        return {
-            "es": "Si puede hacerlo sin riesgo, cierre la llave principal del agua.",
-        }.get(lang, "If you can do it safely, shut the main water valve.")
-    if "electrical" in label:
-        return {
-            "es": "Aléjese y llame al 911 si hay humo o fuego.",
-        }.get(lang, "Stay away from it and call 911 if you see smoke or fire.")
-    if "temperature" in label or "comfort" in label:
-        return {
-            "en": "Keep anyone vulnerable warm or cool, and call 911 if they are unwell.",
-            "es": "Mantenga a las personas vulnerables en un lugar tibio o fresco, y llame al 911 si se sienten mal.",
-            "pt": "Mantenha quem é vulnerável aquecido ou fresco, e ligue para o 911 se passarem mal.",
-            "tl": "Panatilihing mainit o malamig ang mga mahina, at tumawag sa 911 kung masama ang pakiramdam.",
-            "hi": "कमजोर लोगों को गर्म या ठंडा रखें, और तबीयत खराब हो तो 911 पर कॉल करें।",
-            "ur": "کمزور لوگوں کو گرم یا ٹھنڈا رکھیں، اور طبیعت خراب ہو تو 911 پر کال کریں۔",
-            "ar": "أبقِ الضعفاء في مكان دافئ أو بارد، واتصل بالطوارئ إذا ساءت حالتهم.",
-            "roman": "Kamzor logon ko garam ya thanda rakhein, aur tabiyat kharab ho to 911 call karein.",
-        }.get(lang, "Keep anyone vulnerable warm or cool, and call 911 if they are unwell.")
-    return (
-        "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."
-        if lang == "es"
-        else "If you smell gas, leave the house and call 911 or your gas company."
-    )
+    kind = _hazard_kind(hazard, "")
+    if kind == "comfort":
+        return _WARM.get(lang, _WARM["en"])
+    table = _LEAVE.get(kind, _LEAVE["gas"] if kind == "gas" else _LEAVE["other"])
+    if kind not in _LEAVE:
+        table = _LEAVE["other"]
+    return table.get(lang, table["en"])
 
 
 async def _form(request: Request) -> dict[str, str]:

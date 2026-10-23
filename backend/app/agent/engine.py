@@ -140,6 +140,78 @@ _WARM = {
     "ar": "أبقِ الضعفاء في مكان دافئ أو بارد، واتصل بالطوارئ إذا ساءت حالتهم.",
     "roman": "Kamzor logon ko garam ya thanda rakhein, aur tabiyat kharab ho to 911 call karein.",
 }
+_PAGE = {
+    "en": "I'm treating this as an emergency and connecting you to {who}, our on-call technician. Please stay on the line.",
+    "es": "Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea.",
+    "pt": "Isto é urgente. Vou passar a ligação a {who}, o técnico de plantão. Fique na linha.",
+    "tl": "Emergency ito. Ikokonekta kita kay {who}, ang technician na naka-duty. Manatili sa linya.",
+    "hi": "यह इमरजेंसी है। मैं आपको {who} से जोड़ रहा हूँ। लाइन पर बने रहें।",
+    "ur": "یہ ایمرجنسی ہے۔ میں آپ کو {who} سے جوڑ رہا ہوں۔ لائن پر رہیں۔",
+    "ar": "هذه حالة طارئة. أوصلك بـ {who}. ابق على الخط.",
+    "roman": "Yeh emergency hai. Main aap ko {who} se jor raha hoon. Line par rahein.",
+}
+_LEAVE = {
+    "gas": {
+        "en": "If you smell gas, leave the house and call 911 or your gas company.",
+        "es": "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas.",
+        "pt": "Se cheirar a gás, saia e ligue para o 911 ou para a companhia de gás.",
+        "tl": "Kung may amoy gas, lumabas at tumawag sa 911.",
+        "hi": "अगर गैस की गंध हो तो घर से बाहर निकलें और 911 पर कॉल करें।",
+        "ur": "اگر گیس کی بو ہو تو گھر سے باہر نکلیں اور 911 پر کال کریں۔",
+        "ar": "إذا شممت غازا فاخرج واتصل بالطوارئ.",
+        "roman": "Gas ki boo ho to ghar se bahar niklein aur 911 call karein.",
+    },
+    "water": {
+        "en": "If you can do it safely, shut the main water valve and keep people out of the water.",
+        "es": "Si puede hacerlo sin riesgo, cierre la llave principal y no pise el agua.",
+        "pt": "Se puder fazer com segurança, feche o registro principal e não pise na água.",
+        "tl": "Kung ligtas, isara ang main valve at lumayo sa tubig.",
+        "hi": "अगर सुरक्षित हो तो मुख्य वाल्व बंद करें और पानी से दूर रहें।",
+        "ur": "اگر محفوظ ہو تو مین والو بند کریں اور پانی سے دور رہیں۔",
+        "ar": "إذا كان ذلك آمنا، أغلق محبس الماء الرئيسي وابتعد عن الماء.",
+        "roman": "Agar mehfooz ho to main valve band karein aur pani se door rahein.",
+    },
+    "sewage": {
+        "en": "Stay out of the sewage and keep children and pets away from it.",
+        "es": "No toque las aguas negras y aleje a los niños y las mascotas.",
+        "pt": "Não entre no esgoto e afaste crianças e animais.",
+        "tl": "Lumayo sa maruming tubig at ilayo ang mga bata at alaga.",
+        "hi": "गंदे पानी से दूर रहें और बच्चों व पालतू जानवरों को दूर रखें।",
+        "ur": "گندے پانی سے دور رہیں اور بچوں کو دور رکھیں۔",
+        "ar": "ابتعد عن مياه الصرف وأبعد الأطفال والحيوانات.",
+        "roman": "Gande pani se door rahein aur bachon ko door rakhein.",
+    },
+    "electrical": {
+        "en": "Stay away from it and call 911 if you see smoke or fire.",
+        "es": "Aléjese y llame al 911 si hay humo o fuego.",
+        "pt": "Afaste-se e ligue para o 911 se houver fumaça ou fogo.",
+        "tl": "Lumayo at tumawag sa 911 kung may usok o apoy.",
+        "hi": "दूर रहें, और धुआं या आग हो तो 911 पर कॉल करें।",
+        "ur": "دور رہیں، اور دھواں یا آگ ہو تو 911 پر کال کریں۔",
+        "ar": "ابتعد واتصل بالطوارئ إذا رأيت دخانا أو نارا.",
+        "roman": "Door rahein, aur dhuan ya aag ho to 911 call karein.",
+    },
+    "carbon": {
+        "en": "Get everyone outside into fresh air and call 911.",
+        "es": "Saquen a todos afuera, al aire libre, y llamen al 911.",
+        "pt": "Leve todos para fora, ao ar livre, e ligue para o 911.",
+        "tl": "Ilabas ang lahat sa sariwang hangin at tumawag sa 911.",
+        "hi": "सबको ताज़ी हवा में बाहर ले जाएँ और 911 पर कॉल करें।",
+        "ur": "سب کو تازہ ہوا میں باہر لے جائیں اور 911 پر کال کریں۔",
+        "ar": "أخرجوا الجميع إلى الهواء الطلق واتصلوا بالطوارئ.",
+        "roman": "Sab ko taazi hawa mein bahar le jayein aur 911 call karein.",
+    },
+    "other": {
+        "en": "If anyone is hurt, call 911.",
+        "es": "Si alguien está herido, llame al 911.",
+        "pt": "Se alguém estiver ferido, ligue para o 911.",
+        "tl": "Kung may nasaktan, tumawag sa 911.",
+        "hi": "अगर कोई घायल हो तो 911 पर कॉल करें।",
+        "ur": "اگر کوئی زخمی ہو تو 911 پر کال کریں۔",
+        "ar": "إذا أصيب أحد، اتصل بالطوارئ.",
+        "roman": "Agar koi zakhmi ho to 911 call karein.",
+    },
+}
 _CALLBACK = {
     "en": "I can't book a visit in this language. A person will call you back. If you smell gas, leave the house and call 911 or your gas company.",
     "es": "No reservo visitas en español. Una persona de la oficina le devolverá la llamada. Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas.",
@@ -325,9 +397,16 @@ class Engine:
 
         if state.phase == "discover":
             self._fill(state, raw)
+            from app.agent.hazard import names_neither_job_nor_hazard
+
+            neither = names_neither_job_nor_hazard(raw) and not state.issue
+            if neither:
+                state.issue = None
             if state.intent in {None, "unclear"}:
                 state.intent = detect_intent(raw)
-            if state.intent in {None, "unclear"} and state.issue:
+            if neither and state.intent in {None, "unclear"}:
+                state.issue = None
+            elif state.intent in {None, "unclear"} and state.issue:
                 state.intent = "new_job"
             if state.intent == "spam":
                 state.outcome = "spam"
@@ -339,7 +418,7 @@ class Engine:
                 )
             if state.intent in {"new_job", "quote"} and not state.issue:
                 cleaned = " ".join(raw.split())
-                if len(cleaned.split()) >= 3 and not is_spam(cleaned):
+                if len(cleaned.split()) >= 3 and not is_spam(cleaned) and not names_neither_job_nor_hazard(raw):
                     state.issue = cleaned[:80].rstrip(".")
             if state.intent == "unclear":
                 state.unclear_count += 1
@@ -353,6 +432,11 @@ class Engine:
                 )
             if state.intent == "existing_booking":
                 return self._existing(state, raw, started)
+            if state.intent == "quote" and not state.issue:
+                state.quote_given = True
+                state.wish = raw
+                state.phase = "quote_decision"
+                return self._finish(state, self._quote_line(state) + " Want me to book a diagnostic visit?", started)
             return self._continue_intake(state, raw, started)
 
         if state.phase == "existing_lookup":
@@ -479,7 +563,11 @@ class Engine:
                 state.address_from_prompt = True
         if state.street:
             state.address = _compose_address(state.street, state.city, state.zip)
+        from app.agent.hazard import names_neither_job_nor_hazard
+
         issue = extract_issue(text)
+        if issue and names_neither_job_nor_hazard(text):
+            issue = None
         if issue and not state.issue:
             state.issue = issue
         elif not state.issue and re.search(r"\b(inspect\w*|checked)\b", text, re.I):
@@ -506,7 +594,7 @@ class Engine:
                         state.name = guessed
         if state.phase == "collect_issue" and not state.issue:
             cleaned = " ".join(text.split())
-            if len(cleaned.split()) >= 3 and not is_spam(cleaned):
+            if len(cleaned.split()) >= 3 and not is_spam(cleaned) and not names_neither_job_nor_hazard(text):
                 state.issue = cleaned[:80].rstrip(".")
 
     def _continue_intake(self, state: SessionState, text: str, started: float) -> TurnResult:
@@ -1080,37 +1168,31 @@ class Engine:
         state.phase = "closed"
         who = self.config.on_call_name
         comfort = _comfort_hazard(reason, source)
+        fee = self.config.emergency_dispatch_usd
+        prefix = _PAGE.get(state.language, _PAGE["en"]).format(who=who)
         if comfort:
             warm = _WARM.get(state.language, _WARM["en"])
             if state.language == "es":
-                say = (
-                    f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
-                    f"{warm} "
-                    f"La tarifa de emergencia es ${self.config.emergency_dispatch_usd}."
-                )
+                say = f"{prefix} {warm} La tarifa de emergencia es ${fee}."
+            elif state.language == "en":
+                say = f"{prefix} {warm} The emergency dispatch fee is ${fee}."
             else:
-                say = (
-                    f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
-                    f"Please stay on the line. {warm} "
-                    f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
-                )
-        elif state.language == "es":
-            say = (
-                f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
-                "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas. "
-                f"La tarifa de emergencia es ${self.config.emergency_dispatch_usd}."
-            )
+                say = f"{prefix} {warm}"
         elif reason == "Caller requested a person":
             say = (
                 f"You asked for a person, so I'm connecting you to {who}, our on-call technician. "
                 "Please stay on the line."
             )
         else:
-            say = (
-                f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
-                f"Please stay on the line. If you smell gas, leave the house and call 911 or your gas company. "
-                f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
-            )
+            kind = _hazard_kind(reason, source)
+            table = _LEAVE.get(kind, _LEAVE["other"])
+            line = table.get(state.language, table["en"])
+            if state.language == "es":
+                say = f"{prefix} {line} La tarifa de emergencia es ${fee}."
+            elif state.language == "en":
+                say = f"{prefix} {line} The emergency dispatch fee is ${fee}."
+            else:
+                say = f"{prefix} {line}"
         if state.address and state.address_from_prompt and reason != "Caller requested a person":
             say += f" I have the service address as {state.address}."
         events = [
@@ -1337,6 +1419,48 @@ def _choice_fits(choice: datetime | None, preference) -> bool:
     if preference.part == "evening" and choice.hour < 16:
         return False
     return True
+
+
+def _hazard_kind(reason: str | None, source: str = "") -> str:
+    """Which one-line guidance belongs on a page. Gas wording is only for gas."""
+    from app.agent.hazard import (
+        _fire_or_smoke,
+        _gas_happening,
+        _rotten_or_dizzy,
+        _sewage_active,
+        _sounding_detector,
+        _uncontrolled_water,
+        _water_on_power,
+        prepare,
+    )
+
+    folded = prepare(source or "")
+    if folded and _sewage_active(folded):
+        return "sewage"
+    label = (reason or "").lower()
+    if "temperature" in label or "comfort" in label:
+        return "comfort"
+    if "carbon" in label or "monoxide" in label:
+        return "carbon"
+    if "sewage" in label or "sewer" in label:
+        return "sewage"
+    if "electrical" in label:
+        return "electrical"
+    if "water" in label or "flood" in label:
+        return "water"
+    if label.strip() == "gas" or label.startswith("gas"):
+        return "gas"
+    if not folded:
+        return "other"
+    if _sounding_detector(folded):
+        return "carbon"
+    if _water_on_power(folded) or _fire_or_smoke(folded):
+        return "electrical"
+    if _uncontrolled_water(folded):
+        return "water"
+    if _gas_happening(folded) or _rotten_or_dizzy(folded):
+        return "gas"
+    return "other"
 
 
 def _comfort_hazard(reason: str | None, source: str = "") -> bool:

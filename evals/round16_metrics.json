@@ -1,0 +1,27 @@
+{
+  "heldout": "evals/round16_heldout_set.py",
+  "sha256": "96450e399d310f0695ecddc1dc7d0785e8b4684b2cb2e428378d3e361cf66d93",
+  "lines": 47,
+  "thresholds": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.40
+  },
+  "thresholds_moved": false,
+  "e2e_page_recall": "24/24",
+  "e2e_page_recall_rate": 1.0,
+  "false_pages": 0,
+  "non_en_hazard": 13,
+  "non_en_hazard_english_menu": 0,
+  "non_en_hazard_no_menu": "13/13",
+  "injection_roleplay_lines": 3,
+  "injection_roleplay_false_pages": 0,
+  "head": "intfloat/multilingual-e5-large",
+  "checkpoint_blob_bytes": 2235363328,
+  "checkpoint_cache_bytes": 2252995899,
+  "scoring_peak_rss_kb": 2393908,
+  "demo_rss_kb": 2628244,
+  "demo_hwm_kb": 2640652,
+  "pytest": "262 passed, 4 warnings"
+}

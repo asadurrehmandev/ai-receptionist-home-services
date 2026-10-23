@@ -291,14 +291,25 @@ def _softmax(row: np.ndarray) -> np.ndarray:
     return exp / float(exp.sum())
 
 
+_PROB_CACHE: dict[str, np.ndarray] = {}
+
+
 def hazard_probs(text: str) -> np.ndarray | None:
+    cleaned = " ".join((text or "").split())
+    cached = _PROB_CACHE.get(cleaned)
+    if cached is not None:
+        return cached
     weights = _weights()
     vector = _vector(text)
     if weights is None or vector is None:
         return None
     if vector.shape[0] != weights["hazard_W"].shape[1]:
         return None
-    return _softmax(weights["hazard_W"] @ vector + weights["hazard_b"])
+    probs = _softmax(weights["hazard_W"] @ vector + weights["hazard_b"])
+    if len(_PROB_CACHE) > 48:
+        _PROB_CACHE.clear()
+    _PROB_CACHE[cleaned] = probs
+    return probs
 
 
 def confident_routine(text: str) -> bool:
@@ -333,8 +344,16 @@ def _family(text: str) -> str:
         return "Carbon monoxide"
     if any(word in folded for word in ("spark", "chispa", "smoke", "humo", "dhuan", "faísca", "faisca", "شرار")):
         return "Electrical hazard"
-    if any(word in folded for word in ("sewage", "sewer", "aguas negras", "esgoto")):
+    if "चिंगार" in (text or "") or "شرار" in (text or ""):
+        return "Electrical hazard"
+    if any(word in folded for word in ("sewage", "sewer", "aguas negras", "esgoto", "maruming", "ganda pani")):
         return "Sewage"
+    if any(token in (text or "") for token in ("गंदा पानी", "گندا پانی", "مياه الصرف", "مياه المجاري")):
+        return "Sewage"
+    if any(word in folded for word in ("howling", "shrieking", "baj raha")) and any(
+        word in folded for word in ("detector", "alarm", "dizzy", "nause", "headache", "chakkar")
+    ):
+        return "Carbon monoxide"
     if any(
         word in folded
         for word in (
