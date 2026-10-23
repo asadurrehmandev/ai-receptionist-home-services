@@ -338,10 +338,16 @@ _PT_HINTS = (
 _TL_HINTS = (
     "ngayon", "tubig", "usok", "amoy", "bahay", "kuryente", "bata", "mainit", "walang",
     "naman", "yung", "mga", "po", "kisame", "lababo", "gripo",
+    "ang", "ng", "sa", "ay", "hindi", "wala", "ito", "kasi", "ako", "apoy", "init",
+    "lamig", "matanda", "alarma", "kanal", "sunog", "saksakan", "labahan", "panganib",
+    "ilang", "ilaw",
 )
+_TL_STRONG = ("usok", "sunog", "apoy", "panganib", "kuryente", "amoy", "tubig")
 _ROMAN_HINTS = (
     "chahiye", "nahi", "nahin", "pani", "paani", "chingari", "bahut", "rahi", "raha",
     "andar", "ghar", "dadi", "baccha", "bijli", "dhuan", "boo",
+    "hai", "hain", "ka", "ki", "ke", "mein", "se", "aur", "abhi", "khatra",
+    "mera", "meri", "hoon", "wala", "wali", "bohot", "tha", "thi", "nahi",
 )
 
 
@@ -355,7 +361,15 @@ def looks_portuguese(text: str) -> bool:
 
 
 def looks_tagalog(text: str) -> bool:
-    return _hint_count(text, _TL_HINTS) >= 2
+    count = _hint_count(text, _TL_HINTS)
+    if count >= 2:
+        return True
+    # "May usok" is Tagalog. English "may" alone is not.
+    norm = _fold_latin(normalize(text))
+    strong = _hint_count(text, _TL_STRONG)
+    if strong and re.search(r"\bmay\b", norm):
+        return True
+    return False
 
 
 def looks_romanized(text: str) -> bool:
@@ -401,6 +415,10 @@ def is_haggle(text: str) -> bool:
 
 def detect_intent(text: str) -> str:
     if detect_emergency(text):
+        return "emergency"
+    from app.agent.hazard import _present_hazard_clause, prepare as prepare_hazard
+
+    if _present_hazard_clause(prepare_hazard(text)):
         return "emergency"
     if is_spam(text):
         return "spam"
@@ -624,7 +642,35 @@ def _explicit_clear(text: str) -> bool:
     return not re.findall(r"[a-z]{3,}", leftover.lower())
 
 
+_NO_DANGER_PHRASE = re.compile(
+    r"\bno danger\b|"
+    r"\bnot in danger\b|"
+    r"\bno one is (?:in )?(?:any )?danger\b|"
+    r"\bnobody is (?:in )?danger\b|"
+    r"\bno hay peligro\b|\bnadie en peligro\b|\bsin peligro\b|"
+    r"\bn[aã]o h[aá] perigo\b|\bsem perigo\b|\bningu[eé]m em perigo\b|"
+    r"\bwalang panganib\b|\bhindi delikado\b|"
+    r"\bkoi khatra nahi\b|\bkhatra nahi\b|\bkoi khatre mein nahi\b|"
+    r"لا يوجد خطر|لا خطر|ليس هناك خطر|ما في خطر|"
+    r"कोई खतरा नहीं|खतरा नहीं|"
+    r"کوئی خطرہ نہیں|خطرہ نہیں",
+    re.I,
+)
+_LEFTOVER_DANGER = re.compile(
+    r"\b(?:danger|emergency|peligro|perigo|panganib|khatra|delikado)\b|"
+    r"خطر|खतरा|خطرہ|يوجد|هناك",
+    re.I,
+)
 _NATURAL_NO = re.compile(
+    r"\bno danger\b|"
+    r"\bnot in danger\b|"
+    r"\bno hay peligro\b|\bnadie en peligro\b|\bsin peligro\b|"
+    r"\bn[aã]o h[aá] perigo\b|\bsem perigo\b|\bningu[eé]m em perigo\b|"
+    r"\bwalang panganib\b|\bhindi delikado\b|"
+    r"\bkoi khatra nahi\b|\bkhatra nahi\b|"
+    r"لا يوجد خطر|لا خطر|ليس هناك خطر|ما في خطر|"
+    r"कोई खतरा नहीं|खतरा नहीं|"
+    r"کوئی خطرہ نہیں|خطرہ نہیں|"
     r"\bno one is (?:in )?(?:any )?(?:danger|hurt|injured)|"
     r"\bnobody(?:'s| is)?(?:\s+\w+){0,4}\s+(?:hurt|injured|in danger)|"
     r"\bnot that i can tell\b|"
@@ -685,8 +731,13 @@ def safety_decision(text: str) -> str:
     if _hedge_or_urgency(raw):
         return "page"
     if _natural_no(raw):
-        remainder = _NATURAL_NO.sub(" ", raw)
+        denied = bool(_NO_DANGER_PHRASE.search(raw))
+        remainder = _NO_DANGER_PHRASE.sub(" ", raw)
+        remainder = _NATURAL_NO.sub(" ", remainder)
         remainder = _CAN_WAIT.sub(" ", remainder)
+        if denied:
+            # Stripping لا from "لا يوجد خطر" must not leave خطر behind to page.
+            remainder = _LEFTOVER_DANGER.sub(" ", remainder)
         level, _why = classify_emergency(remainder)
         if level == "definite":
             return "page"
@@ -926,6 +977,10 @@ def extract_city(text: str, cities: tuple[str, ...]) -> str | None:
 
 
 def extract_issue(text: str) -> str | None:
+    from app.agent.hazard import _present_hazard_clause, prepare as prepare_hazard
+
+    if _present_hazard_clause(prepare_hazard(text)):
+        return None
     padded = f" {_fold_latin(normalize(text)).replace('heeder', 'heater').replace('heder', 'heater')} "
     for keywords, label in ISSUE_RULES:
         for keyword in keywords:

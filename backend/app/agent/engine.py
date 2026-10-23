@@ -130,6 +130,16 @@ _SAFETY = {
     "ar": "هل أحد في خطر، أو توجد غاز أو دخان أو شرر أو ماء قرب الكهرباء الآن؟",
     "roman": "Kya koi khatre mein hai, ya abhi gas, dhuan, chingari, ya bijli ke paas pani hai?",
 }
+_WARM = {
+    "en": "Keep anyone vulnerable warm or cool, and call 911 if they are unwell.",
+    "es": "Mantenga a las personas vulnerables en un lugar tibio o fresco, y llame al 911 si se sienten mal.",
+    "pt": "Mantenha quem é vulnerável aquecido ou fresco, e ligue para o 911 se passarem mal.",
+    "tl": "Panatilihing mainit o malamig ang mga mahina, at tumawag sa 911 kung masama ang pakiramdam.",
+    "hi": "कमजोर लोगों को गर्म या ठंडा रखें, और तबीयत खराब हो तो 911 पर कॉल करें।",
+    "ur": "کمزور لوگوں کو گرم یا ٹھنڈا رکھیں، اور طبیعت خراب ہو تو 911 پر کال کریں۔",
+    "ar": "أبقِ الضعفاء في مكان دافئ أو بارد، واتصل بالطوارئ إذا ساءت حالتهم.",
+    "roman": "Kamzor logon ko garam ya thanda rakhein, aur tabiyat kharab ho to 911 call karein.",
+}
 _CALLBACK = {
     "en": "I can't book a visit in this language. A person will call you back. If you smell gas, leave the house and call 911 or your gas company.",
     "es": "No reservo visitas en español. Una persona de la oficina le devolverá la llamada. Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas.",
@@ -244,10 +254,12 @@ class Engine:
             self._fill(state, spoken)
             if state.phase in {"collect_name", "quote_decision"} or state.asked_field == "name":
                 state.name = prior_name
+            if emergency == "Hazard" and _comfort_hazard(emergency, spoken):
+                emergency = "Unsafe indoor temperature"
             state.intent = "emergency"
             state.issue = emergency
             state.hazard = emergency
-            return self._escalate(state, started, emergency)
+            return self._escalate(state, started, emergency, source=spoken)
         if level == "ask":
             prior_name = state.name
             self._fill(state, spoken)
@@ -1063,16 +1075,25 @@ class Engine:
         ]
         return self._finish(state, say, started, events)
 
-    def _escalate(self, state: SessionState, started: float, reason: str) -> TurnResult:
+    def _escalate(self, state: SessionState, started: float, reason: str, source: str = "") -> TurnResult:
         state.outcome = "escalated"
         state.phase = "closed"
         who = self.config.on_call_name
-        if state.language == "es" and _comfort_hazard(reason):
-            say = (
-                f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
-                "Mantenga a las personas vulnerables en un lugar tibio o fresco, y llame al 911 si se sienten mal. "
-                f"La tarifa de emergencia es ${self.config.emergency_dispatch_usd}."
-            )
+        comfort = _comfort_hazard(reason, source)
+        if comfort:
+            warm = _WARM.get(state.language, _WARM["en"])
+            if state.language == "es":
+                say = (
+                    f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
+                    f"{warm} "
+                    f"La tarifa de emergencia es ${self.config.emergency_dispatch_usd}."
+                )
+            else:
+                say = (
+                    f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
+                    f"Please stay on the line. {warm} "
+                    f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
+                )
         elif state.language == "es":
             say = (
                 f"Esto es urgente. Lo comunico con {who}, el técnico de guardia. Quédese en la línea. "
@@ -1083,12 +1104,6 @@ class Engine:
             say = (
                 f"You asked for a person, so I'm connecting you to {who}, our on-call technician. "
                 "Please stay on the line."
-            )
-        elif _comfort_hazard(reason):
-            say = (
-                f"I'm treating this as an emergency and connecting you to {who}, our on-call technician. "
-                "Please stay on the line. Keep anyone vulnerable warm or cool, and call 911 if they are unwell. "
-                f"The emergency dispatch fee is ${self.config.emergency_dispatch_usd}."
             )
         else:
             say = (
@@ -1324,9 +1339,18 @@ def _choice_fits(choice: datetime | None, preference) -> bool:
     return True
 
 
-def _comfort_hazard(reason: str | None) -> bool:
+def _comfort_hazard(reason: str | None, source: str = "") -> bool:
     label = (reason or "").lower()
-    return "temperature" in label or "comfort" in label
+    if "temperature" in label or "comfort" in label:
+        return True
+    if not source:
+        return False
+    from app.agent.hazard import _comfort_bundle, _gas_happening, prepare
+
+    folded = prepare(source)
+    if _gas_happening(folded) and not _comfort_bundle(folded):
+        return False
+    return _comfort_bundle(folded)
 
 
 def _lead_payload(state: SessionState, status: str) -> dict:

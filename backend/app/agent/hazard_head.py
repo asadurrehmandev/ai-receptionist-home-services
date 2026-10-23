@@ -335,8 +335,20 @@ def _family(text: str) -> str:
         return "Electrical hazard"
     if any(word in folded for word in ("sewage", "sewer", "aguas negras", "esgoto")):
         return "Sewage"
-    if any(word in folded for word in ("heat", "heater", "furnace", "cooling", "calor", "aquecimento", "हीटर", "ہیٹر")):
-        if any(word in folded for word in ("baby", "infant", "elderly", "abuela", "dadi", "lola", "جدة", "جدتي")):
+    if any(
+        word in folded
+        for word in (
+            "heat", "heater", "furnace", "cooling", "calor", "aquecimento", "init",
+            "lamig", "garmi", "thand", "temperature", "हीटर", "ہیٹر", "تدفئة",
+        )
+    ):
+        if any(
+            word in folded
+            for word in (
+                "baby", "infant", "elderly", "newborn", "abuela", "dadi", "lola",
+                "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
+            )
+        ):
             return "Unsafe indoor temperature"
     if any(word in folded for word in ("gas", "propane", "boo", "olor a gas", "huele", "gás", "غاز")):
         return "Gas"

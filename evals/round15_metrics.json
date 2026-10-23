@@ -1,0 +1,221 @@
+{
+  "embedder": "intfloat/multilingual-e5-large",
+  "checkpoint_gib": 2.1,
+  "thresholds_unchanged": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.4
+  },
+  "word_list_gates_head": false,
+  "file": "evals/round15_heldout_set.py",
+  "sha256": "5f4a0d1da2f0109ae11b2d01cb70e3b956cb7e133d923c30e32ef97ea9373884",
+  "n": 47,
+  "pytest": "251 passed",
+  "rss_kb_scoring_process": 2395096,
+  "rss_kb_current": 2395096,
+  "round15": {
+    "emergencies": 26,
+    "non_emergencies": 21,
+    "head_only": {
+      "hit": 25,
+      "n": 26,
+      "recall": 0.962,
+      "false_pages": 2,
+      "non_emergency": 21,
+      "by_family": {
+        "co": {
+          "n": 1,
+          "hit": 1,
+          "recall": 1.0
+        },
+        "comfort": {
+          "n": 5,
+          "hit": 5,
+          "recall": 1.0
+        },
+        "electrical": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "flood": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "gas": {
+          "n": 3,
+          "hit": 2,
+          "recall": 0.667
+        },
+        "sewage": {
+          "n": 1,
+          "hit": 1,
+          "recall": 1.0
+        },
+        "water_electric": {
+          "n": 4,
+          "hit": 4,
+          "recall": 1.0
+        }
+      },
+      "by_language": {
+        "ar": {
+          "n": 2,
+          "hit": 2,
+          "recall": 1.0
+        },
+        "en": {
+          "n": 10,
+          "hit": 10,
+          "recall": 1.0
+        },
+        "es": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "hi": {
+          "n": 2,
+          "hit": 2,
+          "recall": 1.0
+        },
+        "pt": {
+          "n": 2,
+          "hit": 2,
+          "recall": 1.0
+        },
+        "roman": {
+          "n": 3,
+          "hit": 2,
+          "recall": 0.667
+        },
+        "tl": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "ur": {
+          "n": 1,
+          "hit": 1,
+          "recall": 1.0
+        }
+      }
+    },
+    "end_to_end": {
+      "hit": 26,
+      "n": 26,
+      "recall": 1.0,
+      "false_pages": 0,
+      "non_emergency": 21,
+      "by_family": {
+        "co": {
+          "n": 1,
+          "hit": 1,
+          "recall": 1.0
+        },
+        "comfort": {
+          "n": 5,
+          "hit": 5,
+          "recall": 1.0
+        },
+        "electrical": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "flood": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "gas": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "sewage": {
+          "n": 1,
+          "hit": 1,
+          "recall": 1.0
+        },
+        "water_electric": {
+          "n": 4,
+          "hit": 4,
+          "recall": 1.0
+        }
+      },
+      "by_language": {
+        "ar": {
+          "n": 2,
+          "hit": 2,
+          "recall": 1.0
+        },
+        "en": {
+          "n": 10,
+          "hit": 10,
+          "recall": 1.0
+        },
+        "es": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "hi": {
+          "n": 2,
+          "hit": 2,
+          "recall": 1.0
+        },
+        "pt": {
+          "n": 2,
+          "hit": 2,
+          "recall": 1.0
+        },
+        "roman": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "tl": {
+          "n": 3,
+          "hit": 3,
+          "recall": 1.0
+        },
+        "ur": {
+          "n": 1,
+          "hit": 1,
+          "recall": 1.0
+        }
+      }
+    },
+    "head_misses": [
+      {
+        "kind": "head",
+        "family": "gas",
+        "language": "roman",
+        "decision": "routine",
+        "p_em": 0.506,
+        "text": "Bathroom mein ande jaisi boo aa rahi hai."
+      }
+    ],
+    "e2e_misses": [],
+    "head_false_pages": [
+      {
+        "family": "schedule",
+        "language": "es",
+        "label": "routine",
+        "p_em": 0.661,
+        "text": "el martes por la mañana"
+      },
+      {
+        "family": "vague",
+        "language": "en",
+        "label": "routine",
+        "p_em": 0.643,
+        "text": "I am not sure how to describe the situation."
+      }
+    ],
+    "e2e_false_pages": []
+  }
+}

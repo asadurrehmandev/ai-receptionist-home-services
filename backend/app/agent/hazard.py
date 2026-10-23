@@ -199,6 +199,12 @@ def fold(text: str) -> str:
 _TYPO_TOKEN = {
     "smel": "smell",
     "smeel": "smell",
+    "smke": "smoke",
+    "smoek": "smoke",
+    "somke": "smoke",
+    "smok": "smoke",
+    "outlt": "outlet",
+    "outet": "outlet",
     "smelg": "smell",
     "hous": "house",
     "watr": "water",
@@ -259,6 +265,7 @@ _GLOSS = (
     (re.compile(r"\b(quema|quemo|quemarse)\b"), r"\1 burned"),
     (re.compile(r"\b(hijo|hija|nino|nina|bebe|criatura)\b"), r"\1 child"),
     (re.compile(r"\b(lampara|foco)\b"), r"\1 light fixture"),
+    (re.compile(r"\bluces\b"), "luces lights"),
     (re.compile(r"\bluz\b"), "luz light"),
     (re.compile(r"\b(parpade\w*|titila\w*)\b"), r"\1 flicker"),
     (re.compile(r"\bgote\w*\b"), lambda match: f"{match.group(0)} dripping water"),
@@ -336,7 +343,7 @@ _LEAVING_APPLIANCE = re.compile(
 )
 _WATER_MOTION = re.compile(r"\b(water|agua|drip\w*|leak\w*|wet|gote\w*)\b", re.I)
 _ELEC_SURFACE = re.compile(
-    r"\b(fixture|outlet|socket|receptacle|wiring|electric\w*|light|lamp|luminaire|cord|breaker|panel)\b",
+    r"\b(fixtures?|outlets?|sockets?|receptacles?|wiring|electric\w*|lights?|lamps?|luminaires?|cords?|breakers?|panels?)\b",
     re.I,
 )
 _FROM_WORD = re.compile(r"\b(from|out of|off of|through|de la|del|desde)\b", re.I)
@@ -553,8 +560,27 @@ def _compose_definite(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _water_on_power(text: str) -> bool:
+    """Water touching a light, outlet, cord, or panel. A dry flood-light install is not this."""
+    if re.search(r"\bsparkling\s+water\b", text):
+        return False
+    if _contained_appliance_water(text):
+        return False
+    if re.search(r"\bflood\s+lights?\b", text) and not _WATER_MOTION.search(text):
+        return False
+    if _compose_water_electric(text):
+        return True
+    if not _WATER_MOTION.search(text):
+        return False
+    if re.search(r"\b(?:no water|without water|not wet|sin agua)\b", text):
+        return False
+    return _near(text, _WATER_MOTION, _ELEC_SURFACE, 96)
+
+
 def _catalogue_job(text: str) -> bool:
     if not _CATALOGUE.search(text):
+        return False
+    if _water_on_power(text) or _smoke_happening(text):
         return False
     if _compose_definite(text):
         return False
@@ -671,13 +697,16 @@ _ORDINARY_JOB = re.compile(
 _INSTRUCTION = re.compile(
     r"\b(?:treat this|treat it as|treat the call|classify this|classify it|"
     r"mark this|mark it as|page the on-call|send the on-call|page (?:this|it) as|"
-    r"role-?play|pretend (?:this|that|it)|act as if|you are now|"
-    r"ignore (?:all |any )?(?:previous|prior|above|your) instructions|"
+    r"role-?play|pretend (?:this|that|it|the|there)|act as if|you are now|"
+    r"you are the (?:on-?call|dispatcher|receptionist|agent|system|desk)|"
+    r"ignore (?:all |any |the )?(?:previous|prior|above|your|script|instructions)|"
     r"disregard (?:all |any )?(?:previous|prior|above)|"
     r"override (?:your|the) instructions|"
     r"clasifica(?:r| esto| esta)|ignora las instrucciones|"
     r"system\s*:|escalate (?:this|the) (?:call|visit)|priority override|"
-    r"this (?:call|one|visit) is (?:an? )?(?:[\w]+\s+){0,3}emergenc)\b",
+    r"this (?:call|one|visit) is (?:an? )?(?:[\w]+\s+){0,3}emergenc|"
+    r"say (?:that )?there(?:'s| is) (?:a |an )?(?:fire|gas|emergency)|"
+    r"tell (?:them|him|her|the desk|everyone) (?:it(?:'s| is)|there(?:'s| is)|that it(?:'s| is)) (?:a |an )?(?:fire|gas|emergency))\b",
     re.I,
 )
 
@@ -813,32 +842,74 @@ def _scrub_instruction(text: str) -> str:
     return scrubbed
 
 
+def _without_roleplay(text: str) -> str:
+    """Drop a sentence that only names an emergency class.
+
+    A later sentence that states smoke, gas, or water stays. Fire words that
+    live only inside the instruction sentence do not.
+    """
+    parts = re.split(r"(?<=[.!?])\s+|\n+", text or "")
+    kept: list[str] = []
+    for part in parts:
+        piece = part.strip()
+        if not piece:
+            continue
+        if not _INSTRUCTION.search(piece):
+            kept.append(piece)
+            continue
+        scrubbed = _scrub_instruction(piece)
+        scrubbed = re.sub(r"\b(?:on fire|fire|flames?|ablaze)\b", " ", scrubbed, flags=re.I)
+        if _live_physical(scrubbed):
+            kept.append(scrubbed)
+    return " ".join(kept).strip()
+
+
+def _live_physical(text: str) -> bool:
+    """A hazard that is happening in this text, after roleplay lines are gone.
+
+    A running toilet or a mild drip is a job. Water on a light and live smoke
+    are not, even when the same sentence names a catalogue fixture.
+    """
+    if not (text or "").strip():
+        return False
+    if _ordinary_fixture(text) and not _water_on_power(text) and not _smoke_happening(text):
+        if not _gas_happening(text) and not _fire_or_smoke(text):
+            return False
+    if _water_on_power(text) or _smoke_happening(text):
+        return True
+    if _gas_happening(text) or _fire_or_smoke(text):
+        return True
+    if _sewage_active(text) or _co_alarm_and_symptom(text) or _comfort_bundle(text):
+        return True
+    if _structural_water(text):
+        return True
+    if _mild_water(text):
+        return False
+    if _compose_definite(text) is not None or _present_patterns(text) is not None:
+        return True
+    return False
+
+
+def _present_hazard_clause(text: str) -> bool:
+    """True when a hazard is happening, including water on a light or live smoke.
+
+    An instruction that only names a class is not a clause. A past or
+    hypothetical clause is not one either. Catalogue words and a street
+    shape do not erase a clause that is happening now.
+    """
+    screened = _without_roleplay(text)
+    active = _active_context(screened)
+    if active is None:
+        return False
+    return _live_physical(active)
+
+
 def _described_hazard(text: str) -> bool:
     """A present physical hazard remains after the instruction phrase is removed.
 
     Naming an emergency class, or a routine drip beside that name, is not one.
     """
-    scrubbed = _scrub_instruction(text)
-    if _gas_happening(scrubbed) or _fire_or_smoke(scrubbed) or _live_force(scrubbed):
-        return True
-    if _sewage_active(scrubbed) or _co_alarm_and_symptom(scrubbed) or _comfort_bundle(scrubbed):
-        return True
-    if _present_patterns(scrubbed) is not None:
-        return True
-    if (
-        _mild_water(scrubbed)
-        or _catalogue_job(scrubbed)
-        or _plain_job(scrubbed)
-        or _sink_backup(scrubbed)
-        or _routine_service(scrubbed)
-    ):
-        return False
-    for clause in _split_turn(scrubbed):
-        if _gas(clause) or _electrical(clause):
-            return True
-        if _water(clause, scrubbed) and not _mild_water(clause):
-            return True
-    return False
+    return _present_hazard_clause(text)
 
 
 def _instruction_only(text: str) -> bool:
@@ -1560,6 +1631,22 @@ def _hit(text: str, pattern: re.Pattern[str]) -> bool:
     return any(not _negated_at(text, match.start()) for match in pattern.finditer(text))
 
 
+def _smoke_happening(text: str) -> bool:
+    """Smoke or flames that are happening. A smoke-alarm install or a negated smoke is not."""
+    if re.search(r"\b(?:no smoke|without smoke|sin humo|walang usok|not smoking)\b", text):
+        if not re.search(r"\b(?:smoke|smoking)\b.{0,48}\b(?:coming|pouring|from|rolling|see)\b", text):
+            return False
+    if _fire_or_smoke(text):
+        return True
+    stripped = re.sub(r"\bsmoke\s+(?:alarm|detector)s?\b", " ", text, flags=re.I)
+    if re.search(r"\b(?:chirp\w*|beeping|battery|install\w*|replac\w*|swap|quote)\b", text) and not re.search(
+        r"\b(?:smoke|smoking|humo|usok|dhuan|dhuaan|fuma[cç]a)\b",
+        stripped,
+    ):
+        return False
+    return _hit(stripped, re.compile(r"\b(?:smoke|smoking|humo|usok|dhuan|dhuaan|fuma[cç]a)\b", re.I))
+
+
 def _fire_or_smoke(text: str) -> bool:
     """Flames or smoke from equipment. A negated cooking mention is not a fire."""
     if _COOKING.search(text) and not re.search(r"\b(outlet|panel|breaker|furnace|dryer|compressor)\b", text):
@@ -1984,13 +2071,21 @@ def rules_screen(text: str) -> tuple[str, str | None]:
     """
     original = text
     full = prepare(text)
+    screened = _without_roleplay(full)
+    if _instruction_only(full):
+        if (
+            _plain_job(full)
+            or _ORDINARY_JOB.search(full)
+            or _ordinary_fixture(full)
+            or (screened and _ordinary_fixture(screened))
+        ):
+            return "none", None
+        return "ask", "Uncertain hazard"
+    if screened:
+        full = screened
     clauses = _split_turn(full)
     dropped_clause = bool(clauses) and len([clause for clause in clauses if not _clause_away(clause)]) < len(clauses)
     folded = full
-    if _instruction_only(folded):
-        if _plain_job(folded) or _ORDINARY_JOB.search(folded):
-            return "none", None
-        return "ask", "Uncertain hazard"
     # A booking, a slot, or a routine drip has no present hazard clause.
     # Skipping the semantic model here saves the turn budget. The learned
     # head still embeds this turn in classify_emergency.
@@ -2014,6 +2109,10 @@ def rules_screen(text: str) -> tuple[str, str | None]:
     composed = _compose_definite(folded)
     if composed is not None:
         return composed
+    if _water_on_power(folded) and not _mild_water(folded):
+        return "definite", "Electrical hazard"
+    if _smoke_happening(folded):
+        return "definite", "Electrical hazard"
     if (
         _catalogue_job(folded)
         and not _structural_water(folded)
@@ -2491,6 +2590,8 @@ def _name_only_turn(text: str) -> bool:
 def _slot_shaped(text: str) -> bool:
     """A name, a phone, or a street by itself is not a present hazard clause."""
     raw = " ".join((text or "").split())
+    if _present_hazard_clause(prepare(raw)):
+        return False
     if _name_only_turn(raw):
         return True
     digits = re.sub(r"\D", "", raw)
@@ -2563,6 +2664,8 @@ def _dialog_act(text: str) -> bool:
 
 _SCHEDULE_TURN = re.compile(
     r"\b(?:tomorrow|today|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"lunes|martes|miercoles|jueves|viernes|sabado|domingo|"
+    r"manana|por la tarde|por la noche|"
     r"next week|this week|after lunch|lunchtime|two weeks|"
     r"mid[- ]?(?:january|february|march|april|may|june|july|august|september|october|november|december)|"
     r"end of the month|"
@@ -2591,12 +2694,15 @@ def _content_words(text: str) -> list[str]:
 def _schedule_pick(text: str) -> bool:
     """A turn that only names a day or a slot. Not a sentence with a hazard in it."""
     raw = " ".join((text or "").split())
+    if _present_hazard_clause(prepare(raw)):
+        return False
     if not raw or len(raw) > 80 or not _SCHEDULE_TURN.search(raw):
         return False
     scrub = _SCHEDULE_TURN.sub(" ", raw)
     scrub = re.sub(
         r"\b(?:at|in|the|on|a|an|from|sometime|morning|afternoon|evening|am|pm|"
-        r"please|anything|after|before|next|this|week|send|someone)\b",
+        r"please|anything|after|before|next|this|week|send|someone|"
+        r"el|la|los|las|por|del|al|para|quiero|favor|unas|una|un|works|still|have|if|you)\b",
         " ",
         scrub,
         flags=re.I,
@@ -2740,8 +2846,47 @@ def _spam_turn(text: str) -> bool:
     return bool(is_spam(text))
 
 
+def _booking_request(text: str) -> bool:
+    """A caller asking to book, with no hazard clause in the same turn."""
+    if _present_hazard_clause(text):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:book|schedule|quote|install|replace|repair|service|maintenance|appointment|estimate|hook\s?up|inspect\w*|re-?check\w*)\b",
+            text,
+            re.I,
+        )
+    )
+
+
+def _vague_menu_turn(text: str, original: str = "") -> bool:
+    """English filler that names neither a job nor a hazard. It must not page."""
+    if _present_hazard_clause(text):
+        return False
+    try:
+        from app.agent.nlu import detect_language
+
+        if detect_language(original or text) != "en":
+            return False
+    except Exception:
+        return False
+    if _HAZARD_NOUN.search(text) or _HAZARD_STEM.search(text):
+        return False
+    if re.search(
+        r"\b(?:smell\w*|odor\w*|smoke|gas|spark\w*|alarm|flood|sewage|outlet|panel|dizzy|flame\w*|leak\w*|burst\w*)\b",
+        text,
+    ):
+        return False
+    if _plain_job(text) or _catalogue_job(text) or _ORDINARY_JOB.search(text) or _booking_request(text):
+        return False
+    words = _content_words(text)
+    return 0 < len(words) <= 16
+
+
 def _fast_routine(text: str) -> bool:
     """Recognized non-emergencies. Used to skip a second model, never to skip the head."""
+    if _present_hazard_clause(text):
+        return False
     if (
         _present_patterns(text)
         or _fire_or_smoke(text)
@@ -2772,6 +2917,8 @@ def _blocks_head_page(text: str) -> bool:
     already understand cannot: a plain job, a mild drip, a negated leak,
     seasonal dust, a comfortable house, or comfort loss without a vulnerable person.
     """
+    if _present_hazard_clause(text):
+        return False
     if _policy_floor(text)[0] == "definite":
         return False
     if _compose_definite(text) is not None or _present_patterns(text) is not None:
@@ -2856,6 +3003,10 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
     from app.agent.hazard_head import head_level
 
     head = head_level(text)
+    if _negated_clear(text) or _negated_clear(prepared):
+        # A no-danger answer must not page, even when stripping the negation
+        # would leave the word danger behind.
+        return "none", None
     if rules[0] == "advice" and floor[0] != "definite" and not _symptom_live(prepared):
         return rules
     if _class_name_only(prepared):
@@ -2877,6 +3028,22 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         if _blocks_head_page(prepared):
             return "none", None
         return "ask", "Hazard model unavailable"
+    if head[0] == "definite" and not _present_hazard_clause(prepared):
+        # Page only from a present hazard clause. A high score on a vague
+        # line, a booking time, or a class-name instruction does not escalate.
+        # A non-English line with no English hazard word is not in this list.
+        if (
+            _vague_menu_turn(prepared, text)
+            or _schedule_pick(text)
+            or _schedule_pick(prepared)
+            or _instruction_only(prepared)
+            or _filler_turn(text)
+            or _filler_turn(prepared)
+            or _dialog_act(text)
+            or _booking_request(prepared)
+            or _slot_shaped(text)
+        ):
+            head = ("none", None)
     if head[0] == "definite" and _blocks_head_page(prepared):
         head = ("none", None)
     elif (
@@ -2892,7 +3059,96 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         # A named gas, water, or carbon-monoxide ask is raised when the head pages.
         head = ("ask", head[1] or "Uncertain hazard")
     base = rules if head[0] == "none" else _stricter(rules, head)
-    return _stricter(base, floor)
+    result = _stricter(base, floor)
+    if (
+        result[0] == "none"
+        and not _recognized_clear(prepared, text)
+        and _under_cut_candidate(prepared)
+    ):
+        # Under the page cut, and not a routine job: ask. Do not open the menu.
+        return "ask", "Uncertain hazard"
+    return result
+
+
+def _negated_clear(text: str) -> bool:
+    """A natural no that names danger only to deny it."""
+    if not _NEGATED_CLEAR.search(text or ""):
+        return False
+    scrub = _NEGATED_CLEAR.sub(" ", text or "")
+    scrub = re.sub(
+        r"\b(?:danger|emergency|peligro|perigo|panganib|khatra|delikado)\b",
+        " ",
+        scrub,
+        flags=re.I,
+    )
+    scrub = re.sub(r"خطر|खतरा|خطرہ|يوجد|هناك", " ", scrub)
+    if not scrub.strip():
+        return True
+    return not _present_hazard_clause(prepare(scrub))
+
+
+_UNDER_CUT_DOMAIN = re.compile(
+    r"\b(?:outlets?|panels?|breakers?|smoke|smoking|gas|sparks?|sparking|alarms?|"
+    r"smells?|odou?rs?|dizzy|flames?|burst\w*|flood\w*|sewage|hiss\w*|"
+    r"usok|sunog|dhuan|boo+|humo|fuma[cç]a|enchufe|chispas?)\b",
+    re.I,
+)
+
+
+def _under_cut_candidate(text: str) -> bool:
+    """A line that might be a hazard the rules did not already clear.
+
+    A negated leak, an emergency-fund question, or a school poster is not one.
+    """
+    if _present_hazard_clause(text):
+        return True
+    return any(not _negated_at(text, match.start()) for match in _UNDER_CUT_DOMAIN.finditer(text))
+
+
+def _recognized_clear(prepared: str, original: str) -> bool:
+    """A routine, a slot, filler, or a vague English line. Not a missed hazard."""
+    if _present_hazard_clause(prepared):
+        return False
+    if _blocks_head_page(prepared) or _fast_routine(prepared):
+        return True
+    if _filler_turn(original) or _filler_turn(prepared):
+        return True
+    if _dialog_act(original) or _too_thin(original):
+        return True
+    if _slot_shaped(original) or _schedule_pick(original) or _schedule_pick(prepared):
+        return True
+    if _framed_name_turn(original) or _spam_turn(original) or _code_turn(prepared):
+        return True
+    if _class_name_only(prepared) or _instruction_only(prepared):
+        return True
+    if _vague_menu_turn(prepared, original) or _booking_request(prepared):
+        return True
+    if _mild_water(prepared) or _ordinary_fixture(prepared):
+        return True
+    if framed_entirely_away(prepared) or framed_entirely_away(original):
+        return True
+    try:
+        from app.agent.nlu import _spanish_intent
+
+        if _spanish_intent(original) in {"new_job", "quote", "existing_booking"}:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+_NEGATED_CLEAR = re.compile(
+    r"\bno danger\b|\bnot in danger\b|\bno one is (?:in )?(?:any )?danger\b|"
+    r"\bnobody is (?:in )?danger\b|"
+    r"\bno hay peligro\b|\bnadie en peligro\b|\bsin peligro\b|"
+    r"\bn[aã]o h[aá] perigo\b|\bsem perigo\b|\bningu[eé]m em perigo\b|"
+    r"\bwalang panganib\b|\bhindi delikado\b|"
+    r"\bkoi khatra nahi\b|\bkhatra nahi\b|\bkoi khatre mein nahi\b|"
+    r"لا يوجد خطر|لا خطر|ليس هناك خطر|ما في خطر|"
+    r"कोई खतरा नहीं|खतरा नहीं|"
+    r"کوئی خطرہ نہیں|خطرہ نہیں",
+    re.I,
+)
 
 
 def _warm_semantic() -> None:
