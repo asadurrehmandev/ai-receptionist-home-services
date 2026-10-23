@@ -1437,6 +1437,7 @@ def _hazard_kind(reason: str | None, source: str = "") -> str:
         _fire_or_smoke,
         _gas_happening,
         _rotten_or_dizzy,
+        _ceiling_fan_water,
         _sewage_active,
         _sounding_detector,
         _uncontrolled_water,
@@ -1457,7 +1458,7 @@ def _hazard_kind(reason: str | None, source: str = "") -> str:
         return "carbon"
     if "sewage" in label or "sewer" in label:
         return "sewage"
-    if folded and (_water_on_power(folded) or _fire_or_smoke(folded)):
+    if folded and (_ceiling_fan_water(folded) or _water_on_power(folded) or _fire_or_smoke(folded)):
         return "electrical"
     if "electrical" in label:
         return "electrical"

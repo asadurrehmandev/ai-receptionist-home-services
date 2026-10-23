@@ -243,6 +243,15 @@ SPANISH_HINTS = (
     "peligro",
     "estamos",
     "tarde",
+    "aulla",
+    "aullando",
+    "chispa",
+    "chispas",
+    "enchufe",
+    "tina",
+    "equipo",
+    "cena",
+    "mareada",
 )
 
 
@@ -290,7 +299,7 @@ def is_spam(text: str) -> bool:
 def looks_spanish(text: str) -> bool:
     norm = _fold_latin(normalize(text))
     hits = [hint for hint in SPANISH_HINTS if re.search(rf"\b{re.escape(hint)}\b", norm)]
-    if "hola" in hits or "huele" in hits or "peligro" in hits:
+    if any(token in hits for token in ("hola", "huele", "peligro", "aulla", "aullando", "chispa", "chispas")):
         return True
     # A weekday by itself is the caller's language. "el viernes" is not English.
     if re.search(
@@ -368,6 +377,7 @@ _PT_HINTS = (
     "subindo", "devolve", "ovo",
     "nenem", "neném", "berco", "berço", "bercinho", "quarto", "frio", "aquecimento", "parou", "ficou",
     "crianca", "criança", "nene", "idoso", "idosa", "recem", "calor", "voce", "você",
+    "faisca", "faísca", "guinchando", "tomada", "banheira", "exaustor", "soltando",
 )
 _TL_HINTS = (
     "ngayon", "tubig", "usok", "amoy", "bahay", "kuryente", "bata", "mainit", "walang",
@@ -398,7 +408,8 @@ def _portuguese_marked(text: str) -> bool:
     return bool(
         re.search(
             r"\b(?:nao|nenem|nene|bercinho|berco|aquecimento|aquecedor|gelad\w*|"
-            r"crianca|idoso|idosa|recem|voce|obrigad\w*|torneira|esgoto|fumaca|pingand\w*)\b",
+            r"crianca|idoso|idosa|recem|voce|obrigad\w*|torneira|esgoto|fumaca|pingand\w*|"
+            r"faisca|guinch\w*|banheira|exaustor|tomada)\b",
             folded,
         )
     )
@@ -1058,6 +1069,7 @@ def extract_issue(text: str) -> str | None:
         _present_hazard_clause,
         _physical_change,
         _sewage_active,
+        _slow_drain,
         _sounding_detector,
         _water_on_power,
         prepare as prepare_hazard,
@@ -1074,6 +1086,8 @@ def extract_issue(text: str) -> str | None:
         or _water_on_power(prepared)
     ):
         return None
+    if _slow_drain(prepared):
+        return "Clogged drain"
     padded = f" {_fold_latin(normalize(text)).replace('heeder', 'heater').replace('heder', 'heater')} "
     for keywords, label in ISSUE_RULES:
         for keyword in keywords:

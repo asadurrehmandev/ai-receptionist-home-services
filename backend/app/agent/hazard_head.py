@@ -75,7 +75,8 @@ SERVICE_ISSUE = {
 }
 
 # Defaults until a trained file replaces them. The file is the source of truth.
-PAGE_MIN = 0.80
+# The shipped page cut is 0.55. A missing checkpoint must not reopen a 0.80 gate.
+PAGE_MIN = 0.55
 ASK_MIN = 0.45
 PAGE_MARGIN = 0.15
 ROUTINE_LOCK = 0.70

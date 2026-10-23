@@ -53,7 +53,15 @@ _GAS_SIGNAL = re.compile(
     re.I,
 )
 _GAS_WORD = re.compile(
-    r"\b(gas|propane|natural gas|rotten eggs?|sulfur|sulphur|huevo podrido|azufre)\b",
+    r"\b(gas|propane|natural gas|rotten[- ]eggs?|sulfur|sulphur|huevo podrido|azufre)\b",
+    re.I,
+)
+# A hyphen, and the Hindi, Urdu, and Arabic egg-odor phrases, are still gas.
+_ROTTEN_EGG = re.compile(
+    r"\brotten[- ]eggs?\b|"
+    r"सड़[ेा]\s*अंड|"
+    r"سڑے\s*انڈ|"
+    r"بيض\s+فاسد|بيض\s+متعفن",
     re.I,
 )
 _CO_NAME = re.compile(
@@ -110,14 +118,17 @@ _WATER_PATH = re.compile(
 )
 _SEWAGE = re.compile(
     r"\b(sewage|sewer|raw sewage|sewer water|waste ?water|brown water|black water|"
+    r"foul water|fetid water|gray water|grey water|"
     r"alcantarill\w*|poop water|aguas? negras|"
     r"aguas? sucias?|aguas? podridas?|aguas? sujas?|aguas? podres?|"
+    r"aguas? residual(?:es)?|agua fetida|agua fedida|"
     r"maduming tubig|maruming tubig)\b",
     re.I,
 )
 _SEWAGE_MOTION = re.compile(
     r"\b(backup|backing|backed|coming|overflow|subiendo|regres\w*|devolv\w*|"
-    r"subindo|no para|pushing|empuj\w*|saindo|surg\w*|welling|belch\w*)\b",
+    r"subindo|no para|pushing|empuj\w*|saindo|surg\w*|welling|belch\w*|"
+    r"pump\w*|gurgle\w*|bubbl\w*|burp\w*|voltando|reflux)\b",
     re.I,
 )
 _ELECTRICAL = re.compile(
@@ -488,8 +499,11 @@ def _compose_water_electric(text: str) -> bool:
         return True
     if re.search(r"\blanding on\b", text) and _WATER_MOTION.search(text) and _ELEC_SURFACE.search(text):
         return True
-    # Water leaving the device: "running off the ceiling fan". A drip tracking
-    # toward a panel is not this.
+    # Water leaving the device: "running off the ceiling fan". A room name
+    # may sit between the water and the fan. A drip tracking toward a panel
+    # is not this.
+    if _ceiling_fan_water(text):
+        return True
     if _WATER_MOTION.search(text) and re.search(
         r"\b(?:off|from)\s+(?:the\s+)?(?:ceiling\s+)?(?:fans?|lights?|fixtures?|outlets?|panels?|breakers?)\b",
         text,
@@ -580,6 +594,25 @@ def _compose_definite(text: str) -> tuple[str, str] | None:
     if _compose_co_symptom(text):
         return "definite", "Carbon monoxide"
     return None
+
+
+def _ceiling_fan_water(text: str) -> bool:
+    """Water leaving a ceiling fan. A room name may sit between the two."""
+    if not re.search(r"\bceiling\s+fans?\b", text or "", re.I):
+        return False
+    if not _WATER_MOTION.search(text or ""):
+        return False
+    if _contained_appliance_water(text):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:off|from|out of)\b(?:\s+\w+){0,8}\s+ceiling\s+fans?\b|"
+            r"\bceiling\s+fans?\b(?:\s+\w+){0,6}\s+(?:is\s+|are\s+)?(?:dripp\w*|leak\w*|running|pouring)\b|"
+            r"\b(?:dripp\w*|leak\w*|running|pouring)\b(?:\s+\w+){0,6}\s+(?:off|from|onto)\b",
+            text or "",
+            re.I,
+        )
+    )
 
 
 def _water_on_power(text: str) -> bool:
@@ -945,7 +978,7 @@ _FILL_PLACE = re.compile(
 )
 _DETECTOR_DEVICE = re.compile(r"\b(?:detectors?|alarms?|alarme|alarma)\b", re.I)
 _DETECTOR_HOWL = re.compile(
-    r"\b(?:howling|screaming|shrieking|blaring|wailing|yowl\w*|aull\w*|gritando|uivando|baj raha)\b|"
+    r"\b(?:howling|screaming|shrieking|blaring|wailing|yowl\w*|aull\w*|gritando|uivando|guinch\w*|baj raha)\b|"
     r"\b(?:won't|wont|will not|would not|wouldn't|wouldnt|cannot|can't)\s+(?:quit|stop)\b",
     re.I,
 )
@@ -954,7 +987,8 @@ _DETECTOR_HOWL = re.compile(
 _HOWL_SOURCE = re.compile(
     r"\b(?:detectors?|alarms?|alarme|alarma|units?|devices?|apparatus|aparatos?|"
     r"something|ceiling|wall|techo|caja|unidad|unidades|sensors?|box(?:es)?|"
-    r"closets?|attics?|crawlspaces?|mechanical|utility|"
+    r"closets?|attics?|crawlspaces?|mechanical|utility|air handlers?|handlers?|"
+    r"equipos?|exaustor(?:es)?|"
     r"returns?|grilles?|vents?|monitors?|rejillas?|grelhas?|retornos?|grades?)\b",
     re.I,
 )
@@ -1370,7 +1404,18 @@ def _sewage_active(clause: str) -> bool:
         r"\b(?:voltando|subindo|saindo|transbord\w*|devolv\w*)\b", clause, re.I
     ):
         return True
-    if re.search(r"\bagua\s+(?:suja|podre|sucia|podrida|marron|fea|turbia|hedionda|negra)\b", clause, re.I) and re.search(
+    if re.search(
+        r"\b(?:gray|grey|foul|fetid)\s+water\b|\bagua\s+fetida\b|\bagua\s+fedida\b|\baguas?\s+residual(?:es)?\b",
+        clause,
+        re.I,
+    ) and re.search(
+        r"\b(?:belch\w*|gurgle\w*|pump\w*|drain|tub|floor|laundry|ralo|desague|ducha|"
+        r"banheiro|no para|voltando|subindo|subiendo|back)\b",
+        clause,
+        re.I,
+    ):
+        return True
+    if re.search(r"\bagua\s+(?:suja|podre|sucia|podrida|marron|fea|turbia|hedionda|negra|fetida|fedida)\b", clause, re.I) and re.search(
         r"\b(?:ralo|desague|coladera|drenaje|devolv\w*|subindo|subiendo|saindo|no para|"
         r"inodoro|vaso sanitario|retrete|taza)\b",
         clause,
@@ -1887,7 +1932,7 @@ def _gas_anywhere(text: str) -> bool:
         return False
     if gas_live and odor_live:
         return True
-    rotten = re.search(r"\b(rotten eggs?|sulfur|sulphur)\b", text)
+    rotten = _ROTTEN_EGG.search(text)
     if rotten and not _negated_at(text, rotten.start()):
         return True
     if _LEFT_ON.search(text) and odor_live:
@@ -2936,6 +2981,7 @@ _SCHEDULE_TURN = re.compile(
     r"lunes|martes|miercoles|jueves|viernes|sabado|domingo|"
     r"manana|por la tarde|por la noche|"
     r"next week|this week|after lunch|lunchtime|two weeks|"
+    r"breakfast|lunch|dinner|supper|brunch|cena|comida|almuerzo|jantar|"
     r"mid[- ]?(?:january|february|march|april|may|june|july|august|september|october|november|december)|"
     r"end of the month|"
     r"(?:the )?(?:first|second|third|fourth) one|"
@@ -2971,7 +3017,9 @@ def _schedule_pick(text: str) -> bool:
     scrub = re.sub(
         r"\b(?:at|in|the|on|a|an|from|sometime|morning|afternoon|evening|am|pm|"
         r"please|anything|after|before|next|this|week|send|someone|"
-        r"el|la|los|las|por|del|al|para|quiero|favor|unas|una|un|works|still|have|if|you)\b",
+        r"breakfast|lunch|dinner|supper|brunch|cena|comida|almuerzo|jantar|hora|"
+        r"fine|works|still|have|if|you|is|"
+        r"el|la|los|las|por|del|al|para|de|quiero|favor|unas|una|un)\b",
         " ",
         scrub,
         flags=re.I,
@@ -3015,6 +3063,55 @@ def _filler_turn(text: str) -> bool:
 def _function_only(text: str) -> bool:
     words = _content_words(text)
     return bool(words) and len(words) <= 8 and all(word in _FUNCTION_WORD for word in words)
+
+
+def _drip_fixture_or_tub(text: str) -> bool:
+    """A drip, or a fixture or tub that is leaking, running, or slow.
+
+    Naming a tub in a caulk job is not this.
+    """
+    if re.search(r"\b(?:drip\w*|dripp\w*|weep\w*|seep\w*|gote\w*|pinga\w*)\b", text or "", re.I):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:toilet|faucet|sink|lavatory|shower|spigot|drain|tubs?|bathtubs?|tina)\b",
+            text or "",
+            re.I,
+        )
+        and re.search(
+            r"\b(?:leak\w*|running|runs|clog\w*|slow\w*|backed|backing|draining)\b",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def _unexplained_beside_fixture(text: str) -> bool:
+    """The drip or the tub is not the whole turn. The lists did not cover the rest."""
+    if _DETECTOR_HOWL.search(text or "") or _ILLNESS.search(text or "") or _SYMPTOM.search(text or ""):
+        return True
+    if _ROTTEN_EGG.search(text or "") or _ODOR_WORD.search(text or ""):
+        return True
+    if re.search(
+        r"\b(?:sewage|sewer|septic|foul|fetid|sludge|sparks?|smoke|flames?)\b|"
+        r"\b(?:gray|grey)\s+water\b",
+        text or "",
+        re.I,
+    ):
+        return True
+    return bool(_ceiling_fan_water(text or ""))
+
+
+def _slow_drain(text: str) -> bool:
+    """A basin that empties slowly. The exact phrase 'slow drain' is not required."""
+    if _sewage_active(text) or _sounding_detector(text) or _water_on_power(text):
+        return False
+    if re.search(r"\bslow\s+drain\b", text or "", re.I):
+        return True
+    slow = re.search(r"\b(?:slow(?:ly)?|sluggish|long time|forever)\b", text or "", re.I)
+    place = re.search(r"\b(?:drain|basin|sink|tub|shower|toilet)\b", text or "", re.I)
+    empty = re.search(r"\b(?:empty|empties|emptying|drains|draining)\b", text or "", re.I)
+    return bool(slow and (place or empty))
 
 
 def _ordinary_fixture(text: str) -> bool:
@@ -3317,11 +3414,13 @@ def _emergency_probability(text: str) -> float | None:
 
 def _rotten_or_dizzy(text: str) -> bool:
     """A rotten-egg odor or dizziness is a page, not a vague smell."""
-    if re.search(r"चक्कर|چکر|دوران", text or ""):
+    if re.search(r"चक्कर|چکر|دوران|دوار", text or ""):
+        return True
+    if _ROTTEN_EGG.search(text or ""):
         return True
     return bool(
         re.search(
-            r"\b(?:rotten eggs?|sulfur|sulphur|huevo podrido|ovo podre|"
+            r"\b(?:rotten[- ]eggs?|sulfur|sulphur|huevo podrido|ovo podre|"
             r"dizzy|dizziness|mareo|mareada|nahihilo|chakkar|nauseous|nauseated)\b",
             text or "",
             re.I,
@@ -3456,11 +3555,21 @@ def _positive_routine(prepared: str, original: str) -> bool:
         return True
     if _spanish_wait(original):
         return True
-    # A recognized job the hazard checks already cleared. A drip or a fixture
-    # word does not reach here when a howl, sewage, or fan-water shape is present.
-    if _routine_context(prepared) or _sink_backup(prepared):
+    # A drip, a fixture, or a tub does not explain a head when the same turn
+    # still has a howl, an illness, an odor, sewage, sparks, or fan-water
+    # the lists did not already return for. A faucet leak with nothing else
+    # is a routine.
+    if _drip_fixture_or_tub(prepared) and _unexplained_beside_fixture(prepared):
+        return False
+    if _slow_drain(prepared) and not _unexplained_beside_fixture(prepared):
         return True
-    if _ordinary_fixture(prepared) or _catalogue_job(prepared) or _plain_job(prepared) or _routine_service(prepared):
+    if (_routine_context(prepared) or _sink_backup(prepared)) and not (
+        _drip_fixture_or_tub(prepared) and _unexplained_beside_fixture(prepared)
+    ):
+        return True
+    if _ordinary_fixture(prepared) and not _unexplained_beside_fixture(prepared):
+        return True
+    if _catalogue_job(prepared) or _plain_job(prepared) or _routine_service(prepared):
         return True
     if re.search(r"\blocked myself\b", prepared, re.I):
         return True
@@ -3556,7 +3665,7 @@ def names_neither_job_nor_hazard(text: str) -> bool:
         return True
     if _sewage_active(prepared) or _gas_happening(prepared) or _fire_or_smoke(prepared):
         return False
-    if _plain_job(prepared) or _catalogue_job(prepared) or _ordinary_fixture(prepared):
+    if _plain_job(prepared) or _catalogue_job(prepared) or _ordinary_fixture(prepared) or _slow_drain(prepared):
         return False
     if _ORDINARY_JOB.search(prepared) or _mild_water(prepared) or _booking_request(prepared):
         return False
@@ -3640,6 +3749,15 @@ def classify_emergency(text: str) -> tuple[str, str | None]:
         # head. If that check misses, page or ask. Do not collect a name.
         if _positive_routine(prepared, text):
             head = ("none", None)
+        elif (
+            _drip_fixture_or_tub(prepared)
+            and _unexplained_beside_fixture(prepared)
+            and rules[0] != "definite"
+            and floor[0] != "definite"
+        ):
+            # The lists did not explain this head. A drip, a fixture, or a tub
+            # must not book it, and must not turn the leftover words into a paid page.
+            head = ("ask", "Uncertain hazard")
         elif _physical_change(prepared) or _vague_menu_turn(prepared, text):
             head = ("ask", "Uncertain hazard")
         else:
