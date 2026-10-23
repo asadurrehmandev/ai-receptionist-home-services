@@ -483,13 +483,29 @@ def semantic_ready() -> bool:
     return _model is not None
 
 
+def _person_name_only(text: str) -> bool:
+    """A bare name must not be scored against the water or gas prototypes."""
+    words = [word.strip(".,;:!?\"'") for word in (text or "").split()]
+    if not 2 <= len(words) <= 6 or any(any(ch.isdigit() for ch in word) for word in words):
+        return False
+    particles = {"ur", "bin", "ibn", "bint", "van", "von", "de", "da", "di", "del", "der", "la", "le", "al"}
+    for word in words:
+        core = word.lower()
+        if core in particles:
+            continue
+        if not word[:1].isupper() or not core.isalpha():
+            return False
+    return True
+
+
 def semantic_hazard(text: str) -> tuple[str, str | None]:
     """Return ('definite'|'ask'|'none', label). Empty and tiny strings are none.
 
     A missing model asks a person to judge the call. It does not report 'no hazard'.
+    A turn that is only a person name is not compared with hazard prototypes.
     """
     cleaned = " ".join((text or "").split())
-    if len(cleaned) < 8:
+    if len(cleaned) < 8 or _person_name_only(cleaned):
         return "none", None
     if _load_failed:
         return "ask", "Hazard model unavailable"

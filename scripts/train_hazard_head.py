@@ -30,9 +30,10 @@ from app.agent.hazard_head import (  # noqa: E402
 )
 from hazard_corpus import build  # noqa: E402
 
+# Shipped e5-large weights used this seed. A MiniLM trial on 20261024 was discarded.
 SEED = 20261023
 OUT = ROOT / "backend" / "app" / "agent" / "data" / "hazard_head.npz"
-METRICS = ROOT / "evals" / "round13_metrics.json"
+METRICS = ROOT / "evals" / "hazard_train_metrics.json"
 
 
 def _frozen_texts() -> set[str]:
@@ -44,13 +45,15 @@ def _frozen_texts() -> set[str]:
     from evals.round9_set import ROUND9
     from evals.round11_set import ROUND11
     from evals.round13_heldout_set import HELDOUT as ROUND13
+    from evals.round14_heldout_set import HELDOUT as ROUND14
     from evals.unseen_set import UNSEEN
 
     for pool in (FRESH, OLD, ROUND7, ROUND8, ROUND9, ROUND11, UNSEEN):
         for row in pool:
             banned.add(" ".join(row[-1].split()).casefold())
-    for _label, _family, _language, text in ROUND13:
-        banned.add(" ".join(text.split()).casefold())
+    for pool in (ROUND13, ROUND14):
+        for _label, _family, _language, text in pool:
+            banned.add(" ".join(text.split()).casefold())
     test = ROOT / "backend" / "tests" / "test_round13.py"
     if test.exists():
         # Quoted lines in the new tests stay out of the fit.
@@ -211,8 +214,17 @@ def _search(probs: np.ndarray, labels: list[str]) -> tuple[float, float, float, 
                     fpr = scored["false_page_rate"] or 0.0
                     ask_rate = scored["routine_to_ask_rate"] or 0.0
                     ok = recall >= 0.95 and fpr <= 0.02 and ask_rate <= 0.02
-                    # A point that stays under the false-page cap wins. Then higher recall.
-                    key = (1 if fpr <= 0.02 and ask_rate <= 0.05 else 0, recall if fpr <= 0.02 else 0, -fpr, -ask_rate, 1 if ok else 0)
+                    # Stay under the false-page cap, then higher recall. Among those, keep a
+                    # middle band so ask_min sits below page_min.
+                    gap = 1 if ask_min + 0.05 < page_min else 0
+                    key = (
+                        1 if fpr <= 0.02 and ask_rate <= 0.05 else 0,
+                        round(recall, 2) if fpr <= 0.02 else 0,
+                        gap if fpr <= 0.02 and recall >= 0.95 else 0,
+                        -fpr,
+                        -ask_rate,
+                        1 if ok else 0,
+                    )
                     if best_key is None or key > best_key:
                         best_key = key
                         best = (page_min, ask_min, margin, routine_lock, scored, ok)
@@ -350,14 +362,20 @@ def main() -> None:
     train = _balance(train, rng)
     print(f"train {len(train)} val {len(val)}", flush=True)
 
-    from evals.round13_heldout_set import HELDOUT
+    from evals.round13_heldout_set import HELDOUT as ROUND13
+    from evals.round14_heldout_set import HELDOUT
 
     held = [(" ".join(text.split()), label, "other", family, language) for label, family, language, text in HELDOUT]
-    texts = [row[0] for row in train + val + held]
+    round13 = [(" ".join(text.split()), label, "other", family, language) for label, family, language, text in ROUND13]
+    texts = [row[0] for row in train + val + held + round13]
     vectors = _embed_unique(texts)
     n_train = len(train)
     n_val = len(val)
-    train_x, val_x, held_x = vectors[:n_train], vectors[n_train : n_train + n_val], vectors[n_train + n_val :]
+    n_held = len(held)
+    train_x = vectors[:n_train]
+    val_x = vectors[n_train : n_train + n_val]
+    held_x = vectors[n_train + n_val : n_train + n_val + n_held]
+    round13_x = vectors[n_train + n_val + n_held :]
 
     numpy_rng = np.random.default_rng(SEED)
     hazard_index = {label: index for index, label in enumerate(HAZARD_LABELS)}
@@ -403,6 +421,9 @@ def main() -> None:
     print("held-out", json.dumps(held_metrics), flush=True)
     print("by family", json.dumps(by_family), flush=True)
     print("by language", json.dumps(by_language), flush=True)
+    round13_labels = [row[1] if row[1] in HAZARD_LABELS else "routine" for row in round13]
+    round13_metrics = _score(_probs(round13_x, hazard_w, hazard_b), round13_labels)
+    print("round13 head-only", json.dumps(round13_metrics), flush=True)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(

@@ -10,7 +10,7 @@ WORKDIR /app
 COPY requirements.txt requirements-dev.txt pytest.ini ./
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 ENV FASTEMBED_CACHE_PATH=/app/models
-RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')"
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'); TextEmbedding('intfloat/multilingual-e5-large')"
 RUN python -c "from huggingface_hub import hf_hub_download; import os; dest='/app/models/nli'; os.makedirs(dest, exist_ok=True); repo='MoritzLaurer/deberta-v3-xsmall-zeroshot-v1.1-all-33'; [hf_hub_download(repo, name, local_dir=dest) for name in ('config.json','tokenizer.json','tokenizer_config.json','onnx/model_quantized.onnx')]"
 ENV HF_HUB_OFFLINE=1
 COPY backend /app/backend

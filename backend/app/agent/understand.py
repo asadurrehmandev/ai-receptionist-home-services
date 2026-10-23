@@ -175,7 +175,9 @@ def classifier_mode() -> str:
     from app.agent.hazard_semantic import semantic_ready
 
     if head_ready():
-        return "e5-head"
+        from app.agent.hazard_head import EMBED_MODEL
+
+        return "e5-head" if "e5" in EMBED_MODEL else "minilm-head"
     if semantic_ready() and nli_ready():
         return "keyword+nli"
     return "keyword"

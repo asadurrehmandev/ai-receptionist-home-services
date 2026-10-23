@@ -18,6 +18,15 @@ def main() -> None:
 
     TextEmbedding("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     print("minilm ready")
+    # The learned head uses this same checkpoint. Download it here, with the
+    # other hazard models, so a fresh clone does not fail closed on the first call.
+    import sys
+
+    sys.path.insert(0, str(ROOT / "backend"))
+    from app.agent.hazard_head import EMBED_MODEL
+
+    TextEmbedding(EMBED_MODEL)
+    print("head embedder ready", EMBED_MODEL)
 
     from huggingface_hub import hf_hub_download
 

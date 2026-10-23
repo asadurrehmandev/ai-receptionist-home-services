@@ -1,0 +1,202 @@
+{
+  "embedder": "intfloat/multilingual-e5-large",
+  "head": "logistic-e5",
+  "thresholds_unchanged": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.4
+  },
+  "smaller_embedder": {
+    "tried": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "shipped": false,
+    "reason": "fastembed 0.6.1 has no multilingual-e5-small. A MiniLM logistic head on the same corpus missed the round-13 head-only bar (about 0.72, and 0.14 on romanized)."
+  },
+  "word_list_gates_head": false,
+  "rss_kb_scoring_process": 2438668,
+  "round14": {
+    "file": "evals/round14_heldout_set.py",
+    "sha256": "9d23e681d3238e381a1b8504a9fe94eb4324d3a4a4b0ad694f805f37b368aa96",
+    "n": 80,
+    "head_only": {
+      "hit": 55,
+      "n": 62,
+      "recall": 0.887,
+      "false_pages": 2,
+      "non_emergency": 18,
+      "by_family": {
+        "co": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "comfort": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "electrical": {
+          "n": 9,
+          "hit": 8,
+          "recall": 0.889
+        },
+        "flood": {
+          "n": 9,
+          "hit": 8,
+          "recall": 0.889
+        },
+        "gas": {
+          "n": 10,
+          "hit": 6,
+          "recall": 0.6
+        },
+        "sewage": {
+          "n": 8,
+          "hit": 7,
+          "recall": 0.875
+        },
+        "water_electric": {
+          "n": 8,
+          "hit": 8,
+          "recall": 1.0
+        }
+      },
+      "by_language": {
+        "ar": {
+          "n": 7,
+          "hit": 6,
+          "recall": 0.857
+        },
+        "en": {
+          "n": 13,
+          "hit": 12,
+          "recall": 0.923
+        },
+        "es": {
+          "n": 7,
+          "hit": 6,
+          "recall": 0.857
+        },
+        "hi": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        },
+        "pt": {
+          "n": 7,
+          "hit": 5,
+          "recall": 0.714
+        },
+        "roman": {
+          "n": 7,
+          "hit": 5,
+          "recall": 0.714
+        },
+        "tl": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        },
+        "ur": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        }
+      }
+    },
+    "end_to_end": {
+      "hit": 60,
+      "n": 62,
+      "recall": 0.968,
+      "false_pages": 0,
+      "non_emergency": 18,
+      "by_family": {
+        "co": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "comfort": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "electrical": {
+          "n": 9,
+          "hit": 8,
+          "recall": 0.889
+        },
+        "flood": {
+          "n": 9,
+          "hit": 9,
+          "recall": 1.0
+        },
+        "gas": {
+          "n": 10,
+          "hit": 10,
+          "recall": 1.0
+        },
+        "sewage": {
+          "n": 8,
+          "hit": 7,
+          "recall": 0.875
+        },
+        "water_electric": {
+          "n": 8,
+          "hit": 8,
+          "recall": 1.0
+        }
+      },
+      "by_language": {
+        "ar": {
+          "n": 7,
+          "hit": 6,
+          "recall": 0.857
+        },
+        "en": {
+          "n": 13,
+          "hit": 13,
+          "recall": 1.0
+        },
+        "es": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        },
+        "hi": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        },
+        "pt": {
+          "n": 7,
+          "hit": 6,
+          "recall": 0.857
+        },
+        "roman": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        },
+        "tl": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        },
+        "ur": {
+          "n": 7,
+          "hit": 7,
+          "recall": 1.0
+        }
+      }
+    }
+  },
+  "round13_current_end_to_end": {
+    "head_only_hit": 105,
+    "head_only_n": 114,
+    "head_only_false_pages": 0,
+    "end_to_end_hit": 114,
+    "end_to_end_n": 114,
+    "end_to_end_false_pages": 0
+  }
+}

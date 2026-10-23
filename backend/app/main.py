@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from app.agent.hazard_nli import nli_ready
+from app.agent.hazard_head import head_ready
 from app.agent.hazard_semantic import semantic_ready
 from app.agent.understand import classifier_mode, hazard_screen_mode, understand_ready, understander_name
 from app.config_loader import load_business
@@ -110,7 +111,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health():
         semantic = semantic_ready()
         nli = nli_ready()
-        degraded = [name for name, ready_flag in (("semantic", semantic), ("nli", nli)) if not ready_flag]
+        head = head_ready()
+        degraded = [
+            name
+            for name, ready_flag in (("head", head), ("semantic", semantic), ("nli", nli))
+            if not ready_flag
+        ]
         ready = not degraded
         body = {
             "ok": ready,

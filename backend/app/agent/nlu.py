@@ -327,11 +327,59 @@ def _spanish_intent(text: str) -> str | None:
     return None
 
 
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+_URDU_MARK = re.compile(r"[ٹڈڑںےھہ]")
+_ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
+_PT_HINTS = (
+    "torneira", "pingando", "agua", "água", "nao", "não", "cheiro", "fumaca", "fumaça",
+    "faisca", "faísca", "esgoto", "quero", "manutencao", "manutenção", "cano", "vazamento",
+    "lavanderia", "estudo", "estúdio", "agora", "ninguem", "ninguém",
+)
+_TL_HINTS = (
+    "ngayon", "tubig", "usok", "amoy", "bahay", "kuryente", "bata", "mainit", "walang",
+    "naman", "yung", "mga", "po", "kisame", "lababo", "gripo",
+)
+_ROMAN_HINTS = (
+    "chahiye", "nahi", "nahin", "pani", "paani", "chingari", "bahut", "rahi", "raha",
+    "andar", "ghar", "dadi", "baccha", "bijli", "dhuan", "boo",
+)
+
+
+def _hint_count(text: str, hints: tuple[str, ...]) -> int:
+    norm = _fold_latin(normalize(text))
+    return sum(1 for hint in hints if re.search(rf"\b{re.escape(_fold_latin(hint))}\b", norm))
+
+
+def looks_portuguese(text: str) -> bool:
+    return _hint_count(text, _PT_HINTS) >= 2
+
+
+def looks_tagalog(text: str) -> bool:
+    return _hint_count(text, _TL_HINTS) >= 2
+
+
+def looks_romanized(text: str) -> bool:
+    return _hint_count(text, _ROMAN_HINTS) >= 2
+
+
 def detect_language(text: str) -> str:
-    """Return en, es, or other. Spanish books. Other languages get a callback."""
-    if looks_spanish(text):
+    """Return a language id. Spanish books. Other languages get a safety question, then a callback."""
+    raw = text or ""
+    if _DEVANAGARI.search(raw):
+        return "hi"
+    if _URDU_MARK.search(raw):
+        return "ur"
+    if _ARABIC_SCRIPT.search(raw):
+        return "ar"
+    if looks_spanish(raw):
         return "es"
-    if _OTHER_SCRIPT.search(text or ""):
+    if looks_portuguese(raw):
+        return "pt"
+    if looks_tagalog(raw):
+        return "tl"
+    if looks_romanized(raw):
+        return "roman"
+    if _OTHER_SCRIPT.search(raw):
         return "other"
     norm = normalize(text)
     if any(re.search(rf"\b{re.escape(word)}\b", norm) for word in _OTHER_WORDS if word.isascii()):
@@ -577,8 +625,14 @@ def _explicit_clear(text: str) -> bool:
 
 
 _NATURAL_NO = re.compile(
-    r"\b(?:nope|nah|no)\b|"
+    r"\bno one is (?:in )?(?:any )?(?:danger|hurt|injured)|"
+    r"\bnobody(?:'s| is)?(?:\s+\w+){0,4}\s+(?:hurt|injured|in danger)|"
+    r"\bnot that i can tell\b|"
+    r"\bnot that i know of\b|"
     r"\bnot at all\b|"
+    r"\bnothing like that\b|"
+    r"\b(?:nope|nah|no|nahi|nahin|nao|não|walang|wala|hindi)\b|"
+    r"नहीं|نہیں|لا|"
     r"\bnothing like that\b|"
     r"\bnot that i know of\b|"
     r"\bnot that i can tell\b|"
@@ -587,8 +641,6 @@ _NATURAL_NO = re.compile(
     r"\ball good\b|"
     r"\beveryone(?:'s| is) (?:fine|ok|okay|safe|good)\b|"
     r"\beverybody(?:'s| is) (?:fine|ok|okay|safe|good)\b|"
-    r"\bnobody(?:'s| is)?(?:\s+\w+){0,4}\s+(?:hurt|injured|in danger)|"
-    r"\bno one is (?:in )?(?:any )?(?:danger|hurt|injured)|"
     r"\bnot an emergency\b|"
     r"\bthe house is fine\b",
     re.I,
@@ -606,7 +658,10 @@ def _natural_no(text: str) -> bool:
     return bool(_NATURAL_NO.search(text or ""))
 
 
-_SAFETY_YES = re.compile(r"\b(yes|yeah|yep|yup)\b", re.I)
+_SAFETY_YES = re.compile(
+    r"\b(yes|yeah|yep|yup|si|sí|sim|oo|haan|han|naan|نعم)\b|हाँ|ہاں",
+    re.I,
+)
 _FLED = re.compile(
     r"\b(got out|gotten out|left the (?:house|building|home)|evacuat\w*|"
     r"went outside|stepped outside|(?:are|we're|we are) outside|standing outside|"

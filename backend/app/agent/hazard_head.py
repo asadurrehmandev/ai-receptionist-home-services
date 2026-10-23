@@ -1,9 +1,9 @@
-"""Learned hazard and service heads on multilingual-e5-large.
+"""Learned hazard and service heads.
 
-The head is a multinomial logistic regression on the sentence embedding,
-its cosine to family centroids, and a hashed word-and-character sketch.
-It is the base screen. Hand rules may raise its level. They do not lower a
-page, except that a battery chirp stays advice.
+The head is a multinomial logistic regression on a multilingual sentence
+embedding. It is the base screen and it runs on every caller turn. Hand
+rules may raise its level. A routine clearance may block a page. A word
+list never skips the embedding.
 
 Labels are emergency, ask_safety, routine, and other. A second head on the
 same vector picks a service for ordinary booking.
@@ -25,6 +25,11 @@ CHAR_DIM = 1024
 WORD_SCALE = 2.2
 CHAR_SCALE = 0.7
 COS_SCALE = 4.0
+# multilingual-e5-large is 1024-d and about 2.2 GB on disk. With MiniLM and
+# DeBERTa also loaded, process RSS is about 2.6 GB. fastembed 0.6.1 does not
+# ship multilingual-e5-small. A MiniLM logistic head trained on the same
+# corpus reached 0.72 held-out emergency recall, under the 0.90 bar, so the
+# desk keeps e5-large. The word list does not skip this embedding.
 EMBED_MODEL = "intfloat/multilingual-e5-large"
 
 HAZARD_LABELS = ("emergency", "ask_safety", "routine", "other")
@@ -143,12 +148,25 @@ def _cache_dir() -> str | None:
 
 
 def _e5():
-    """The multilingual embedder. None when the weights are not on disk."""
+    """The multilingual embedder. None when the weights are not on disk.
+
+    The MiniLM head reuses the prototype embedder so the process does not
+    load a second copy of the same checkpoint.
+    """
     global _MODEL
     if _MODEL is False:
         return None
     if _MODEL is not None:
         return _MODEL
+    if EMBED_MODEL == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2":
+        try:
+            from app.agent.hazard_semantic import _embedder
+
+            _MODEL = _embedder()
+            return _MODEL
+        except Exception:
+            _MODEL = False
+            return None
     try:
         from fastembed import TextEmbedding
     except Exception:
@@ -170,9 +188,14 @@ def _e5():
 
 
 def head_ready() -> bool:
-    if _weights() is None:
+    """True when the checkpoint and the weights share one vector size."""
+    weights = _weights()
+    if weights is None or _e5() is None:
         return False
-    return _e5() is not None
+    sample = embed_texts(["ready"])
+    if sample is None:
+        return False
+    return int(sample.shape[1]) == int(weights["hazard_W"].shape[1])
 
 
 def _bucket(token: str, dim: int) -> int:
@@ -211,12 +234,15 @@ def _sketch(texts: list[str]) -> np.ndarray:
 
 
 def embed_texts(texts: list[str]) -> np.ndarray | None:
-    """L2-normalized e5 embeddings. The query prefix is required by e5."""
+    """L2-normalized embeddings. e5 models require a query prefix. MiniLM does not."""
     model = _e5()
     if model is None:
         return None
     cleaned = [" ".join((text or "").split()) for text in texts]
-    prefixed = [f"query: {text}" if text else "query: " for text in cleaned]
+    if "e5" in EMBED_MODEL:
+        prefixed = [f"query: {text}" if text else "query: " for text in cleaned]
+    else:
+        prefixed = cleaned
     try:
         rows = [np.asarray(vector, dtype=np.float32) for vector in model.embed(prefixed)]
     except Exception:
@@ -284,16 +310,11 @@ def confident_routine(text: str) -> bool:
 
 
 def head_level(text: str) -> tuple[str, str | None] | None:
-    """The head's own level. None means it could not run, not that the line is safe."""
-    target = text or ""
-    try:
-        from app.agent.hazard import _instruction_only, prepare
+    """The head's own level. None means it could not run, not that the line is safe.
 
-        folded = prepare(target)
-        if _instruction_only(folded):
-            return "none", None
-    except Exception:
-        target = text or ""
+    Every non-empty turn is embedded. A word list does not skip this call.
+    """
+    target = text or ""
     probs = hazard_probs(target)
     if probs is None:
         return None

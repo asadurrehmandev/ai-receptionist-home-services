@@ -84,6 +84,7 @@ class SessionState:
     address_from_prompt: bool = False
     address_read_back: bool = False
     degraded_asked: bool = False
+    foreign_safety_asked: bool = False
     safety_reasks: int = 0
     messages: list = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
@@ -119,6 +120,26 @@ _ASK_EN = "Is anyone in danger or is there gas, smoke, sparks or water near elec
 _ASK_ES = "¿Hay alguien en peligro o hay gas, humo, chispas o agua cerca de la electricidad ahora mismo?"
 _OFFER_EN = _ASK_EN
 _OFFER_ES = _ASK_ES
+_SAFETY = {
+    "en": _ASK_EN,
+    "es": _ASK_ES,
+    "pt": "Há alguém em perigo, ou há gás, fumaça, faíscas ou água perto da eletricidade agora?",
+    "tl": "May nasa panganib ba, o may gas, usok, spark, o tubig malapit sa kuryente ngayon?",
+    "hi": "क्या कोई खतरे में है, या अभी गैस, धुआं, चिंगारी, या बिजली के पास पानी है?",
+    "ur": "کیا کوئی خطرے میں ہے، یا ابھی گیس، دھواں، چنگاری، یا بجلی کے پاس پانی ہے؟",
+    "ar": "هل أحد في خطر، أو توجد غاز أو دخان أو شرر أو ماء قرب الكهرباء الآن؟",
+    "roman": "Kya koi khatre mein hai, ya abhi gas, dhuan, chingari, ya bijli ke paas pani hai?",
+}
+_CALLBACK = {
+    "en": "I can't book a visit in this language. A person will call you back. If you smell gas, leave the house and call 911 or your gas company.",
+    "es": "No reservo visitas en español. Una persona de la oficina le devolverá la llamada. Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas.",
+    "pt": "Não consigo marcar nesta língua. Alguém da loja liga de volta. Se cheirar a gás, saia e ligue para o 911 ou para a companhia de gás.",
+    "tl": "Hindi ko maibubook ang bisita sa wikang ito. Tatawag ang opisina. Kung may amoy gas, lumabas at tumawag sa 911.",
+    "hi": "मैं इस भाषा में बुकिंग नहीं कर सकता। दफ्तर से कोई वापस कॉल करेगा। अगर गैस की गंध हो तो घर से बाहर निकलें और 911 पर कॉल करें।",
+    "ur": "میں اس زبان میں بکنگ نہیں کر سکتا۔ دفتر سے کوئی واپس کال کرے گا۔ اگر گیس کی بو ہو تو گھر سے باہر نکلیں اور 911 پر کال کریں۔",
+    "ar": "لا أحجز بهذه اللغة. سيتصل أحد من المكتب. إذا شممت غازا فاخرج واتصل بالطوارئ.",
+    "roman": "Is zaban mein booking nahi ho sakti. Daftar se koi wapas call karega. Gas ki boo ho to ghar se bahar niklein aur 911 call karein.",
+}
 
 
 def _instruction_with_slot(text: str) -> bool:
@@ -234,7 +255,7 @@ class Engine:
                 state.name = prior_name
             state.phase = "hazard_check"
             state.issue = state.issue or emergency
-            return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
+            return self._finish(state, self._safety_prompt(state), started)
         from app.agent.hazard_head import confident_routine
 
         if (
@@ -249,7 +270,7 @@ class Engine:
             self._fill(state, spoken)
             state.phase = "hazard_check"
             state.issue = state.issue or "Possible hazard"
-            return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
+            return self._finish(state, self._safety_prompt(state), started)
         if level == "advice":
             self._fill(state, spoken)
             state.issue = state.issue or "CO detector battery"
@@ -262,8 +283,12 @@ class Engine:
             if stripped:
                 raw = stripped
 
-        if state.language == "other" and state.phase not in FIELD_PHASES:
+        if state.language not in {"en", "es"} and state.phase not in FIELD_PHASES:
             self._fill(state, raw)
+            if not state.foreign_safety_asked:
+                state.foreign_safety_asked = True
+                state.phase = "hazard_check"
+                return self._finish(state, self._safety_prompt(state), started)
             return self._language_handoff(state, started)
 
         if state.phase not in FIELD_PHASES and wants_human(raw):
@@ -306,9 +331,9 @@ class Engine:
                     state.issue = cleaned[:80].rstrip(".")
             if state.intent == "unclear":
                 state.unclear_count += 1
-                if state.unclear_count > 2:
+                if state.unclear_count > 2 or state.language not in {"en", "es"}:
                     state.phase = "unclear_handoff"
-                    return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
+                    return self._finish(state, self._safety_prompt(state), started)
                 return self._finish(
                     state,
                     "I can help with a new repair, an estimate, an existing appointment, or an emergency. What's going on?",
@@ -332,7 +357,7 @@ class Engine:
                 state.issue_rejects += 1
                 if state.issue_rejects >= 2:
                     state.phase = "unclear_handoff"
-                    return self._finish(state, self._line(state, _ASK_EN, _ASK_ES), started)
+                    return self._finish(state, self._safety_prompt(state), started)
                 return self._finish(
                     state,
                     self._line(state, "Tell me a bit more about what's going wrong.", "Cuénteme un poco más qué está fallando."),
@@ -879,20 +904,14 @@ class Engine:
         result = self._finish(state, say, started, events)
         return result
 
+    def _safety_prompt(self, state: SessionState) -> str:
+        return _SAFETY.get(state.language, _SAFETY["en"])
+
     def _language_handoff(self, state: SessionState, started: float, prefix: str = "") -> TurnResult:
         state.phase = "closed"
         state.outcome = "qualified"
         state.intent = state.intent or "handoff"
-        if state.language == "es":
-            say = (
-                "No reservo visitas en español. Una persona de la oficina le devolverá la llamada. "
-                "Si huele a gas, salga de la casa y llame al 911 o a la compañía de gas."
-            )
-        else:
-            say = (
-                "I can't book a visit in this language. A person will call you back. "
-                "If you smell gas, leave the house and call 911 or your gas company."
-            )
+        say = _CALLBACK.get(state.language, _CALLBACK["en"])
         if prefix:
             say = f"{prefix} {say}"
         return self._finish(state, say, started, self._capture_events(state, "lead.callback"))
@@ -903,14 +922,18 @@ class Engine:
         on_clear is 'intake' after a hazard question, or 'callback' after the
         unclear-path question, where a clean no still does not name a job.
         """
-        level_now, emergency_now = assess_caller_turn(raw)
+        decision = safety_decision(raw)
+        if understand_enabled():
+            decision = combine_safety(raw, understand_turn(raw))
+        # A clear no, or a request to call back, is not a page. The head can
+        # score those sentences as emergencies; the safety decision wins.
+        level_now, emergency_now = ("none", None)
+        if decision not in {"clear", "callback"}:
+            level_now, emergency_now = assess_caller_turn(raw)
         if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
             state.hazard = emergency_now
             self._fill(state, raw)
             return self._escalate(state, started, state.hazard)
-        decision = safety_decision(raw)
-        if understand_enabled():
-            decision = combine_safety(raw, understand_turn(raw))
         if decision == "page":
             state.hazard = "Caller confirmed danger"
             self._fill(state, raw)
@@ -919,7 +942,7 @@ class Engine:
         if decision == "callback" or on_clear == "callback":
             return self._office_callback(state, started)
         state.degraded_asked = True
-        if state.language == "other":
+        if state.language not in {"en", "es"}:
             return self._language_handoff(state, started)
         state.phase = "discover"
         return self._continue_intake(state, raw, started)
@@ -940,14 +963,16 @@ class Engine:
         Yes still pages. No does not. The follow-up asks whether to call back,
         and yes on that question is a callback, not a page.
         """
-        level_now, emergency_now = assess_caller_turn(raw)
+        decision = safety_decision(raw)
+        if understand_enabled():
+            decision = combine_safety(raw, understand_turn(raw))
+        level_now, emergency_now = ("none", None)
+        if decision not in {"clear", "callback"}:
+            level_now, emergency_now = assess_caller_turn(raw)
         if level_now == "definite" and emergency_now and emergency_now != "Hazard model unavailable":
             state.hazard = emergency_now
             self._fill(state, raw)
             return self._escalate(state, started, state.hazard)
-        decision = safety_decision(raw)
-        if understand_enabled():
-            decision = combine_safety(raw, understand_turn(raw))
         if decision == "page":
             state.hazard = "Caller confirmed danger"
             self._fill(state, raw)
