@@ -162,10 +162,9 @@ def test_unclear_menu_stops_after_two_tries_and_still_checks_hazards():
     loop = SessionState()
     engine.handle(loop, "asdf qwerty")
     second = engine.handle(loop, "blah blah blah")
-    assert "what's going on" in second.say.lower()
-    third = engine.handle(loop, "still nothing useful")
-    assert "danger" in third.say.lower()
-    assert "what's going on" not in third.say.lower()
+    assert "danger" in second.say.lower()
+    assert "what's going on" not in second.say.lower()
+    assert loop.phase == "unclear_handoff"
     callback = engine.handle(loop, "a person please")
     assert loop.outcome == "callback"
     assert callback.events

@@ -422,7 +422,7 @@ class Engine:
                     state.issue = cleaned[:80].rstrip(".")
             if state.intent == "unclear":
                 state.unclear_count += 1
-                if state.unclear_count > 2 or state.language not in {"en", "es"}:
+                if state.unclear_count >= 2 or state.language not in {"en", "es"}:
                     state.phase = "unclear_handoff"
                     return self._finish(state, self._safety_prompt(state), started)
                 return self._finish(

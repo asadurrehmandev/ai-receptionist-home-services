@@ -1,0 +1,39 @@
+{
+  "heldout": "evals/round18_heldout_set.py",
+  "sha256": "12a7ab82306727b43a91a27f50c2c6d7462427aee33cd0aac756af77ed0629ed",
+  "lines": 45,
+  "thresholds": {
+    "page_min": 0.55,
+    "ask_min": 0.55,
+    "page_margin": 0.02,
+    "routine_lock": 0.40
+  },
+  "thresholds_moved": false,
+  "e2e_page_recall": "21/21",
+  "e2e_page_recall_rate": 1.0,
+  "false_pages": 0,
+  "false_page_denominator": 24,
+  "non_en_hazard": 13,
+  "non_en_hazard_english_menu": 0,
+  "non_en_hazard_no_menu": "13/13",
+  "booking_instruction_emergency_lines": 2,
+  "booking_instruction_emergency_false_pages": 0,
+  "booking_instruction_emergency_fee_quotes": 0,
+  "heads_at_or_above_0_80": 12,
+  "heads_at_or_above_0_80_neither_page_nor_safety": 0,
+  "howling_illness_pages": "4/4",
+  "by_family_e2e": {
+    "sewage": "9/9",
+    "co": "4/4",
+    "gas": "3/3",
+    "flood": "1/1",
+    "electrical": "2/2",
+    "comfort": "2/2"
+  },
+  "head": "intfloat/multilingual-e5-large",
+  "checkpoint_blob_bytes": 2235363328,
+  "checkpoint_cache_bytes": 2252995899,
+  "demo_rss_kb": 2628440,
+  "demo_hwm_kb": 2640708,
+  "pytest": "282 passed, 4 warnings"
+}

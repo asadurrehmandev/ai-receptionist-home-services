@@ -86,10 +86,9 @@ def test_a_vague_third_turn_asks_instead_of_paging():
     engine = _engine()
     state = SessionState()
     engine.handle(state, "asdf qwerty")
-    engine.handle(state, "blah blah blah")
-    third = engine.handle(state, "the water")
+    second = engine.handle(state, "the water")
     assert state.outcome != "escalated"
-    assert "danger" in third.say.lower()
+    assert "danger" in second.say.lower()
 
 
 def test_gas_smell_fire_and_fast_water_page_and_fees_do_not():

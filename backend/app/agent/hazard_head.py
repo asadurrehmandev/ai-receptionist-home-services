@@ -351,13 +351,14 @@ def _family(text: str) -> str:
         for word in (
             "sewage", "sewer", "aguas negras", "agua sucia", "agua podrida", "agua suja", "agua podre",
             "esgoto", "maruming", "maduming", "ganda pani", "ganda paani", "coladera",
+            "dirty water", "nasty water", "vaso sanitario",
         )
     ):
         return "Sewage"
     if any(token in (text or "") for token in ("गंदा पानी", "گندا پانی", "مياه الصرف", "مياه المجاري")):
         return "Sewage"
-    if any(word in folded for word in ("howling", "screaming", "shrieking", "aullando", "gritando", "uivando", "baj raha")) and any(
-        word in folded for word in ("detector", "alarm", "unit", "aparato", "dizzy", "nause", "headache", "sick", "cabeza", "chakkar", "faint", "tonta")
+    if any(word in folded for word in ("howling", "screaming", "shrieking", "wailing", "yowl", "aullando", "gritando", "uivando", "baj raha")) and any(
+        word in folded for word in ("detector", "alarm", "unit", "aparato", "box", "dizzy", "nause", "headache", "sick", "cabeza", "chakkar", "faint", "tonta", "mareo")
     ):
         return "Carbon monoxide"
     if any(
@@ -372,8 +373,8 @@ def _family(text: str) -> str:
             word in folded
             for word in (
                 "baby", "infant", "elderly", "newborn", "abuela", "dadi", "lola", "bebe", "bebê",
-                "nieto", "nieta", "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
-                "gelada", "gelado",
+                "nieto", "nieta", "nenem", "neném", "sanggol", "दादी", "دادی", "جدة", "جدتي", "degree", "degrees", "grados",
+                "gelada", "gelado", "frio", "berco", "berço",
             )
         ):
             return "Unsafe indoor temperature"

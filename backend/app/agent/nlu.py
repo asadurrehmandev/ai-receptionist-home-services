@@ -355,6 +355,7 @@ _PT_HINTS = (
     "bebe", "bebê", "gelada", "gelado", "aquecedor", "banheiro", "cozinha", "ralo",
     "suja", "podre", "estranha", "barulho", "perigo", "nenhum", "saindo", "interruptor",
     "subindo", "devolve", "ovo",
+    "nenem", "neném", "berco", "berço", "quarto", "frio", "aquecimento", "parou", "ficou",
 )
 _TL_HINTS = (
     "ngayon", "tubig", "usok", "amoy", "bahay", "kuryente", "bata", "mainit", "walang",
@@ -998,9 +999,23 @@ def extract_city(text: str, cities: tuple[str, ...]) -> str | None:
 
 
 def extract_issue(text: str) -> str | None:
-    from app.agent.hazard import _present_hazard_clause, prepare as prepare_hazard
+    from app.agent.hazard import (
+        _comfort_bundle,
+        _missed_hazard_shape,
+        _present_hazard_clause,
+        _sewage_active,
+        _sounding_detector,
+        prepare as prepare_hazard,
+    )
 
-    if _present_hazard_clause(prepare_hazard(text)):
+    prepared = prepare_hazard(text)
+    if (
+        _present_hazard_clause(prepared)
+        or _sounding_detector(prepared)
+        or _sewage_active(prepared)
+        or _missed_hazard_shape(prepared)
+        or _comfort_bundle(prepared)
+    ):
         return None
     padded = f" {_fold_latin(normalize(text)).replace('heeder', 'heater').replace('heder', 'heater')} "
     for keywords, label in ISSUE_RULES:

@@ -135,9 +135,8 @@ def test_a_vague_turn_is_not_stored_and_a_clean_no_offers_a_callback():
     assert "what's going on" in first.say.lower()
     second = engine.handle(state, "Hard to put into words.")
     assert state.issue is None
-    assert "what's going on" in second.say.lower()
-    third = engine.handle(state, "still nothing useful")
-    assert "danger" in third.say.lower()
+    assert "danger" in second.say.lower()
+    assert "what's going on" not in second.say.lower()
     assert state.phase == "unclear_handoff"
     answer = engine.handle(state, "no")
     assert state.outcome != "escalated"
