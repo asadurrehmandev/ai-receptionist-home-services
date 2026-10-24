@@ -91,6 +91,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             threading.Thread(target=purge_loop, daemon=True).start()
         if settings.seed_on_start and store.count_calls() == 0:
             seed_demo(service)
+        try:
+            from app.agent.hazard_head import warm_hazard_stack
+
+            warm_hazard_stack()
+        except Exception:
+            logger.warning("Hazard model warmup skipped", exc_info=True)
         yield
         stop_purge.set()
         store.close()

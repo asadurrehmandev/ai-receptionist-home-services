@@ -169,6 +169,10 @@ export function Simulator() {
     return () => window.clearTimeout(timer);
   }, [turn]);
 
+  function markEnded(result: DemoTurn | null) {
+    if (result?.outcome) setEnded(true);
+  }
+
   async function send(text: string, activeId = callId) {
     const trimmed = text.trim();
     let id = activeId;
@@ -181,13 +185,14 @@ export function Simulator() {
     const result = await api.sendTurn(id, trimmed);
     setTurn(result);
     setEvents((current) => [...current, ...result.events]);
+    markEnded(result);
     await typeReply(result.say, result.latency_ms);
     return result;
   }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (busy || ended || !draft.trim()) return;
+    if (busy || ended || turn?.outcome || !draft.trim()) return;
     setBusy(true);
     try {
       await send(draft);
@@ -214,6 +219,7 @@ export function Simulator() {
       }
       setCursor(script.turns.length);
       setTurn(latest);
+      markEnded(latest);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Playback failed.");
     } finally {
@@ -274,6 +280,27 @@ export function Simulator() {
     }
   }
 
+  async function startNewCall() {
+    setBusy(true);
+    setError(null);
+    try {
+      await begin();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not start a new call.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function chooseScenario(nextId: string) {
+    const switching = nextId !== scriptId;
+    setScriptId(nextId);
+    setCursor(0);
+    if (switching && (ended || turn?.outcome || callId)) {
+      await startNewCall();
+    }
+  }
+
   if (error && bubbles.length === 0) return <ErrorState message={error} onRetry={() => begin()} />;
 
   const slots = turn?.slots;
@@ -303,8 +330,7 @@ export function Simulator() {
                 role="radio"
                 aria-checked={selected}
                 onClick={() => {
-                  setScriptId(item.id);
-                  setCursor(0);
+                  void chooseScenario(item.id);
                 }}
                 className={cn(
                   "block w-full rounded-md px-2 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -347,6 +373,11 @@ export function Simulator() {
             <Button type="button" size="sm" variant="outline" onClick={endCall} disabled={ended}>
               End
             </Button>
+            {(ended || turn?.outcome) && (
+              <Button type="button" size="sm" onClick={() => void startNewCall()} disabled={busy}>
+                Start new call
+              </Button>
+            )}
             <Button type="button" size="sm" variant="outline" onClick={step} disabled={busy || ended || cursor >= script.turns.length}>
               Step
             </Button>
@@ -419,19 +450,37 @@ export function Simulator() {
           )}
         </div>
         <form onSubmit={onSubmit} className="border-t border-border p-3">
+          {(ended || turn?.outcome) && (
+            <p className="mb-2 text-sm text-muted-foreground">
+              This call is finished. Start a new call to try another scenario or line.
+            </p>
+          )}
           <div className="flex items-center gap-2 rounded-lg border border-border bg-background p-2 shadow-composer dark:shadow-none">
             <Input
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder={ended ? "Call ended" : "What the caller says"}
+              placeholder={ended || turn?.outcome ? "Start a new call to continue" : "What the caller says"}
               aria-label="Caller line"
-              disabled={busy || ended}
+              disabled={busy || ended || Boolean(turn?.outcome)}
               className="border-0 bg-transparent shadow-none focus-visible:ring-offset-0"
             />
-            <Button type="button" size="icon" variant="ghost" onClick={listen} aria-label="Speak as the caller" disabled={ended}>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={listen}
+              aria-label="Speak as the caller"
+              disabled={ended || Boolean(turn?.outcome)}
+            >
               <Mic className="h-4 w-4" />
             </Button>
-            <Button type="submit" size="icon" variant="outline" disabled={busy || ended || !draft.trim()} aria-label="Send caller line">
+            <Button
+              type="submit"
+              size="icon"
+              variant="outline"
+              disabled={busy || ended || Boolean(turn?.outcome) || !draft.trim()}
+              aria-label="Send caller line"
+            >
               <Send className="h-4 w-4" />
             </Button>
           </div>

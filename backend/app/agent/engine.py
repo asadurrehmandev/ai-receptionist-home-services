@@ -302,6 +302,26 @@ class Engine:
         if state.phase == "closed":
             if state.booking_id and state.last_reply and raw == (state.last_caller_text or ""):
                 return self._finish(state, state.last_reply, started)
+            level, emergency = assess_caller_turn(raw)
+            from app.agent.hazard import _instruction_only, prepare
+
+            if _instruction_only(prepare(raw)) and level in {"ask", "definite"}:
+                level, emergency = "none", None
+            if level == "definite" and emergency:
+                prior_name = state.name
+                self._fill(state, raw)
+                if state.phase in {"collect_name", "quote_decision"} or state.asked_field == "name":
+                    state.name = prior_name
+                if emergency == "Hazard" and _comfort_hazard(emergency, raw):
+                    emergency = "Unsafe indoor temperature"
+                state.intent = "emergency"
+                state.issue = emergency
+                state.hazard = emergency
+                state.hazard_text = raw
+                return self._escalate(state, started, emergency, source=raw)
+            if level == "ask":
+                self._fill(state, raw)
+                return self._finish(state, self._safety_prompt(state), started)
             return self._finish(
                 state,
                 "This call has ended. Please call back if something else comes up.",
@@ -320,6 +340,7 @@ class Engine:
         if state.hazard:
             # Dialog stores the rules label, then hands the turn here. The label
             # "Active water" is also a flood. The caller's words pick the line.
+            self._fill(state, state.hazard_text or raw)
             return self._escalate(state, started, state.hazard, source=state.hazard_text or raw)
 
         spoken = raw

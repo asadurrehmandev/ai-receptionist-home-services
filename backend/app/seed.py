@@ -27,9 +27,8 @@ def seed_demo(service) -> list[dict]:
     return planted
 
 
-def _at(moment: datetime, day: int, hour: int, minute: int) -> datetime:
-    base = moment.astimezone(moment.tzinfo).replace(hour=0, minute=0, second=0, microsecond=0)
-    return base + timedelta(days=day, hours=hour, minutes=minute)
+def _ago(moment: datetime, delta: timedelta) -> datetime:
+    return moment - delta
 
 
 def _plant_day(service) -> list[dict]:
@@ -38,7 +37,7 @@ def _plant_day(service) -> list[dict]:
         {
             "id": "call_seed_lena",
             "channel": "phone",
-            "start": _at(moment, 0, 8, 12),
+            "start": _ago(moment, timedelta(hours=10, minutes=12)),
             "minutes": 3,
             "seconds": 40,
             "name": "Lena Ortiz",
@@ -53,7 +52,7 @@ def _plant_day(service) -> list[dict]:
         {
             "id": "call_seed_spam",
             "channel": "phone",
-            "start": _at(moment, 0, 9, 5),
+            "start": _ago(moment, timedelta(hours=8, minutes=5)),
             "minutes": 2,
             "seconds": 12,
             "name": None,
@@ -68,7 +67,7 @@ def _plant_day(service) -> list[dict]:
         {
             "id": "call_seed_jordan",
             "channel": "simulator",
-            "start": _at(moment, 0, 10, 18),
+            "start": _ago(moment, timedelta(hours=7, minutes=18)),
             "minutes": 5,
             "seconds": 5,
             "name": "Jordan Hale",
@@ -79,12 +78,12 @@ def _plant_day(service) -> list[dict]:
             "outcome": "booked",
             "caller": "My kitchen drain is clogged and backing up into the sink.",
             "reply": "You're booked. The technician will see you this afternoon.",
-            "booking": {"day": 0, "hour": 16, "minute": 0},
+            "booking_at": timedelta(hours=3),
         },
         {
             "id": "call_seed_priya",
             "channel": "phone",
-            "start": _at(moment, 0, 11, 40),
+            "start": _ago(moment, timedelta(hours=6, minutes=40)),
             "minutes": 5,
             "seconds": 18,
             "name": "Priya Raman",
@@ -95,12 +94,12 @@ def _plant_day(service) -> list[dict]:
             "outcome": "booked",
             "caller": "The AC is not cooling.",
             "reply": "You're booked for tomorrow afternoon.",
-            "booking": {"day": 1, "hour": 13, "minute": 0},
+            "booking_at": timedelta(hours=28),
         },
         {
             "id": "call_seed_quote",
             "channel": "phone",
-            "start": _at(moment, 0, 13, 6),
+            "start": _ago(moment, timedelta(hours=5, minutes=6)),
             "minutes": 2,
             "seconds": 40,
             "name": None,
@@ -115,7 +114,7 @@ def _plant_day(service) -> list[dict]:
         {
             "id": "call_seed_leak",
             "channel": "phone",
-            "start": _at(moment, 0, 14, 22),
+            "start": _ago(moment, timedelta(hours=4, minutes=22)),
             "minutes": 3,
             "seconds": 11,
             "name": None,
@@ -130,7 +129,7 @@ def _plant_day(service) -> list[dict]:
         {
             "id": "call_seed_chris",
             "channel": "phone",
-            "start": _at(moment, 0, 15, 48),
+            "start": _ago(moment, timedelta(hours=3, minutes=48)),
             "minutes": 5,
             "seconds": 48,
             "name": "Chris Patel",
@@ -141,7 +140,7 @@ def _plant_day(service) -> list[dict]:
             "outcome": "booked",
             "caller": "We have no hot water. I think the water heater is dead.",
             "reply": "You're booked for tomorrow morning.",
-            "booking": {"day": 1, "hour": 9, "minute": 0},
+            "booking_at": timedelta(hours=20),
         },
     ]
     planted = []
@@ -169,9 +168,11 @@ def _plant_day(service) -> list[dict]:
         service.store.add_turn(row["id"], "caller", row["caller"], None, row["start"] + timedelta(seconds=20))
         service.store.add_turn(row["id"], "agent", row["reply"], 6.4, end)
         service.store.save_state(row["id"], state, ended=True, ended_at=end)
-        booking = row.get("booking")
-        if booking:
-            start = _at(moment, booking["day"], booking["hour"], booking["minute"])
+        booking_at = row.get("booking_at")
+        if booking_at is not None:
+            start = moment + booking_at
+            if start <= moment:
+                start = moment + timedelta(hours=1)
             service.engine.calendar.book(
                 {
                     "id": "bk_" + row["id"],

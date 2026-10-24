@@ -412,3 +412,17 @@ def route_issue(text: str) -> str | None:
     if hazard is not None and decide(hazard) in {"emergency", "ask_safety"}:
         return None
     return SERVICE_ISSUE.get(service)
+
+
+def warm_hazard_stack() -> None:
+    """Load weights and run one embed pass so the first caller turn is not cold."""
+    _weights()
+    head_level("warm the hazard head embedder at startup")
+    try:
+        from app.agent.hazard_nli import nli_opinion
+        from app.agent.hazard_semantic import semantic_hazard
+
+        semantic_hazard("warm the hazard embedder at startup")
+        nli_opinion("warm the offline safety classifier at startup")
+    except Exception:
+        pass
